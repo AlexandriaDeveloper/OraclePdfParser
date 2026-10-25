@@ -1,0 +1,15 @@
+**/bin/
+**/obj/
+**/node_modules/
+**/dist/
+**/.angular/
+**/coverage/
+**/data/
+*.db
+*.db-wal
+*.db-shm
+*.pdf
+*.xlsx
+*.csv
+.env
+!.github/

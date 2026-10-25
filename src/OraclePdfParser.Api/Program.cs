@@ -28,7 +28,7 @@ app.MapPost("/api/imports",async (HttpRequest request,PayrollImportService servi
     }
     try {var batch=await service.ImportAsync(uploads,ct);return Results.Ok(batch);}
     catch(InvalidDataException ex){return Results.BadRequest(new{error=ex.Message});}
-},new Microsoft.AspNetCore.Http.Metadata.ProducesResponseTypeMetadata(200,typeof(PayrollImport),["application/json"])); 
+}); 
 app.MapGet("/api/imports",async (IPayrollImportRepository repository,CancellationToken ct)=>
 {
     var imports=await repository.ListAsync(ct);
