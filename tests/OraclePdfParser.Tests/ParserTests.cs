@@ -57,6 +57,26 @@ public sealed class ParserTests
     }
 
     [Fact]
+    public void PercentageInLabel_IsNotMistakenForMoney()
+    {
+        var doc=new PdfDocumentText([new PdfPageText(1,"""
+            اسم الموظف: موظف اختبار رقم الصرف: 30200105-12345 الرقم القومى: 28010100000001
+            الاستحقاقات
+            21110101 المرتب الاساسى 100
+            أجمالى الاستحقاقات 100
+            21120202 حكومة 0.25% اصابة عمل 40
+            الاستقطاعات
+            41110201 مستحقات 10
+            الأجمالى الاستقطاعات 10
+            الصافى: 130
+            """)]);
+        var employee=Assert.Single(new PayslipParser().Parse(doc));
+        Assert.Equal(40m,employee.EmployerContributions);
+        Assert.DoesNotContain(employee.Issues,i=>i.Severity==IssueSeverity.Error);
+        Assert.Contains(employee.Items,i=>i.Kind==ItemKind.EmployerContribution && i.Amount==40m);
+    }
+
+    [Fact]
     public void Payslip_RejectsIncorrectNet()
     {
         var doc=new PdfDocumentText([new PdfPageText(1,"""

@@ -1,4 +1,4 @@
 <Project Sdk="Microsoft.NET.Sdk">
 <PropertyGroup><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><AllowUnsafeBlocks>true</AllowUnsafeBlocks></PropertyGroup>
-<ItemGroup><ProjectReference Include="../OraclePdfParser.Application/OraclePdfParser.Application.csproj"/><PackageReference Include="PDFiumCore" Version="157.0.8100"/><PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.0"/></ItemGroup>
+<ItemGroup><ProjectReference Include="../OraclePdfParser.Application/OraclePdfParser.Application.csproj"/><PackageReference Include="PDFiumCore" Version="157.0.8100"/><PackageReference Include="Microsoft.Data.Sqlite.Core" Version="10.0.0"/><PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5"/></ItemGroup>
 </Project>

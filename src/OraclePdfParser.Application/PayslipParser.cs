@@ -55,6 +55,7 @@ public sealed class PayslipParser
         {
             if (pending == null) return;
             var raw = pending;
+            var originalSource = pending;
             pending = null;
             string? code = null;
             var start = CodeStart.Match(raw);
@@ -69,7 +70,7 @@ public sealed class PayslipParser
             if (trailing.Success) { code ??= trailing.Groups["code"].Value; raw = raw[..trailing.Index]; }
             bool subtotal = Regex.IsMatch(raw, @"^x(?:\s|$)", RegexOptions.IgnoreCase);
             var nums = Money.Matches(raw).Cast<Match>()
-                .Where(m => !m.Value.EndsWith('%'))
+                .Where(m => m.Index + m.Length >= raw.Length || raw[m.Index + m.Length] != '%')
                 .ToList();
             // Distinguish 2014/2015, legislative labels, and percentages from an actual money amount.
             var candidates = nums.Where(m => m.Value.Contains('.') || m.Value.Contains(',')).ToList();
@@ -77,7 +78,7 @@ public sealed class PayslipParser
             if (selected is null || !ArabicText.TryMoney(selected.Value, out decimal amount))
             {
                 employee.Issues.Add(new(IssueSeverity.Warning,"UNPARSED_ITEM",
-                    "تعذر تحديد المبلغ: " + pending, pendingPage, employee.NationalId));
+                    "تعذر تحديد المبلغ: " + originalSource, pendingPage, employee.NationalId));
                 return;
             }
             string label = (raw[..selected.Index] + " " + raw[(selected.Index+selected.Length)..]).Trim();
@@ -85,7 +86,7 @@ public sealed class PayslipParser
             if (label.Length == 0) { employee.Issues.Add(new(IssueSeverity.Warning,"EMPTY_ITEM_NAME",raw,pendingPage,employee.NationalId)); return; }
             var kind = subtotal ? ItemKind.Subtotal : code?.StartsWith("2112",StringComparison.Ordinal)==true ?
                 ItemKind.EmployerContribution : section;
-            employee.Items.Add(new PayrollItem(code,label,amount,kind,pendingPage,pending));
+            employee.Items.Add(new PayrollItem(code,label,amount,kind,pendingPage,originalSource));
         }
 
         foreach (var (page,line) in lines)
