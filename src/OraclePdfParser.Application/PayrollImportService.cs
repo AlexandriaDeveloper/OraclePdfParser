@@ -180,81 +180,113 @@ public sealed class PayrollImportService : IPayrollImportService {
     }
     private ImportReport Payment(string file,IReadOnlyList<string> pages) {
         var employees=new List<PayrollEmployee>();var groups=new List<CoverGroup>();var issues=new List<ImportIssue>();
-        string? bank=null,branch=null;decimal runningNet=0;int runningCount=0,startPage=1;bool hasGroup=false;
+        string? bank=null,branch=null;decimal runningNet=0;int runningCount=0,startPage=1;
+        (string First,string Previous,string Region,int Page,string? Bank)? pending=null;
+        bool ParsePair(string first,string second,string previous,string identity,string region,int sourcePage,string? sourceBank) {
+            var a=Currency.Matches(first).Select(m=>m.Value).ToArray();
+            var b=Currency.Matches(second).Select(m=>m.Value).ToArray();
+            if(a.Length!=11||b.Length!=11)return false;
+            var ded=Arabic.Amount(b[0]);if(ded is null)return false;
+            var normalGross=Arabic.Amount(a[9]);var normalNet=Arabic.Amount(a[10]);
+            var invertedGross=Arabic.Amount(a[1]);var invertedNet=Arabic.Amount(a[0]);
+            decimal? gross=null,net=null;bool reordered=false;
+            if(normalGross is not null&&normalNet is not null&&Math.Abs(normalGross.Value-normalNet.Value-ded.Value)<=.02m) {
+                gross=normalGross;net=normalNet;
+            }else if(invertedGross is not null&&invertedNet is not null&&Math.Abs(invertedGross.Value-invertedNet.Value-ded.Value)<=.02m){
+                gross=invertedGross;net=invertedNet;reordered=true;
+            }else return false;
+            var ms=Currency.Matches(first);var prefix=first[..ms[0].Index].Trim();
+            var suffix=first[(ms[^1].Index+ms[^1].Length)..].Trim();
+            var name=Regex.IsMatch(prefix,@"[\u0621-\u064a]")?prefix:previous;
+            // Split lines in Oracle reports may put a continuation surname after the values.
+            var tail=Regex.Replace(suffix,@"\d{4,6}-\d{5,6}|\b\d{2,3}\b","").Trim();
+            if(tail.Length>1&&Regex.IsMatch(tail,@"[\u0621-\u064a]"))name=(name+" "+tail).Trim();
+            name=Regex.Replace(name,@"\s+"," ").Trim();
+            if(name.Length<5||!Regex.IsMatch(name,@"[\u0621-\u064a]"))return false;
+            var n12=Regex.Match(identity,@"(?<!\d)\d{12}(?!\d)");
+            var suffixId=Regex.Match(second,@"^\s*(\d{2})\s");
+            var national=n12.Success&&suffixId.Success?n12.Value+suffixId.Groups[1].Value:null;
+            // RTL textual order of payment number: rightmost fixed prefix can be split from suffix.
+            var reversed=ReversePay.Match(region);
+            string? payment=null;
+            if(reversed.Success) {
+                var head=reversed.Groups[2].Value;
+                var required=head.Length==6?2:head.Length==5?3:0;
+                if(required>0) {
+                    var ending=Regex.Match(region,@"(?<!\d)\d{2,3}(?!\d)").Value;
+                    if(ending.Length==required)payment=head+ending+"-"+reversed.Groups[1].Value;
+                }
+            }
+            var warnings=new List<string>();
+            if(national is null)warnings.Add("National identifier not proven for employee row");
+            if(payment is null)warnings.Add("Disbursement identifier not proven for employee row");
+            if(reordered)warnings.Add("Column stream reordered: reconciled gross, net and deductions only");
+            employees.Add(new(national,payment,name,sourceBank,gross,ded,net,[],warnings,sourcePage,sourcePage));
+            foreach(var w in warnings)issues.Add(new("PAYMENT_ROW_REVIEW",w,sourcePage));
+            runningNet+=net.Value;runningCount++;
+            return true;
+        }
         for(int pi=0;pi<pages.Count;pi++) {
             var t=pages[pi];var lines=Arabic.Lines(t);
-            var bankMatch=Labeled(t,"البنك","الفرع") ?? Labeled(t,"البنك ","الفرع");
-            if(bankMatch is not null) {bank=bankMatch;branch=Field(t,"الفرع");}
-            var end=Array.FindIndex(lines,l=>Has(l,"إقرار"));
-            if(end<0)end=lines.Length;
+            var currentBank=Labeled(t,"البنك","الفرع")??Labeled(t,"البنك ","الفرع");
+            if(currentBank is not null) {bank=currentBank;branch=Field(t,"الفرع");}
+            var end=Array.FindIndex(lines,l=>Has(l,"إقرار"));if(end<0)end=lines.Length;
             var section=Array.FindLastIndex(lines,Math.Max(0,end-1),end,l=>Has(l,"الاستقطاعات"));
             if(section<0)section=0;
-            for(var i=section+1;i<end;i++) {
-                var row=lines[i];var cash=Currency.Matches(row).Select(m=>m.Value).ToList();
-                if(cash.Count!=11)continue;
-                // Aggregate rows and continuation pages don't carry an employee marker.
-                var heading=string.Join(" ",lines.Skip(Math.Max(section,i-3)).Take(Math.Min(3,i-section)));
-                if(Has(heading,"اجمالي السجل")||Has(heading,"إجمالى السجل")) continue;
-                int second=-1;
-                for(var j=i+1;j<=Math.Min(i+3,end-1);j++)
-                    if(Currency.Matches(lines[j]).Count==11){second=j;break;}
-                if(second<0)continue;
-                var b=Currency.Matches(lines[second]).Select(m=>m.Value).ToArray();
-                var gross=Arabic.Amount(cash[9]);var net=Arabic.Amount(cash[10]);var deduction=Arabic.Amount(b[0]);
-                if(gross is null || net is null || deduction is null || Math.Abs(gross.Value-net.Value-deduction.Value)>.02m)continue;
-                // Only treat a numeric pair as an employee if the nearby text identifies a person.
-                var firstMoney=Currency.Match(row);
-                var prefix=row[..firstMoney.Index].Trim();
-                var suffix=row[(Currency.Matches(row)[^1].Index+Currency.Matches(row)[^1].Length)..].Trim();
-                var prev=i>0?lines[i-1]:"";
-                var name=prefix.Length>2 && Regex.IsMatch(prefix,@"[\u0621-\u064a]")?prefix:
-                    Regex.IsMatch(prev,@"[\u0621-\u064a]")?prev:"";
-                if(name.Length<5)continue;
-                // Continuation word may appear after the final numeric value.
-                var tail=Regex.Replace(suffix,@"\d{4,6}-\d{5,6}|\b\d{2,3}\b","").Trim();
-                if(tail.Length>1 && Regex.IsMatch(tail,@"[\u0621-\u064a]")) name=(name+" "+tail).Trim();
-                var near=string.Join(" ",lines.Skip(Math.Max(section,i-3)).Take(Math.Min(end,second+1)-Math.Max(section,i-3)));
-                var reverse=ReversePay.Match(near);
-                // Reverse code is unambiguous only when its missing suffix is actually present.
-                string? payId=null;
-                if(reverse.Success){
-                    var candidate=reverse.Groups[2].Value;string? suffixDigits=null;
-                    if(candidate.Length==6) suffixDigits=Regex.Match(suffix,@"\b\d{2}\b").Value;
-                    else suffixDigits=Regex.Match(suffix,@"\b\d{3}\b").Value;
-                    if(suffixDigits.Length>0)payId=candidate+suffixDigits+"-"+reverse.Groups[1].Value;
+            if(pending is not null) {
+                // A complete two-row employee record may be split across consecutive PDF pages.
+                bool completed=false;
+                for(int k=section+1;k<Math.Min(end-1,section+14);k++) {
+                    if(!Regex.IsMatch(lines[k],@"(?<!\d)\d{12}(?!\d)"))continue;
+                    if(Currency.Matches(lines[k+1]).Count!=11)continue;
+                    var x=pending.Value;
+                    if(ParsePair(x.First,lines[k+1],x.Previous,lines[k],x.Region,x.Page,x.Bank)) completed=true;
+                    break;
                 }
-                string? nid=null;
-                // The 14-digit Egyptian ID is split into a 12-digit line and 2-digit prefix.
-                if(second>i+1){
-                    var part=Regex.Match(lines[second-1],@"(?<!\d)\d{12}(?!\d)");
-                    var part2=Regex.Match(lines[second],@"^\s*(\d{2})\s");
-                    if(part.Success&&part2.Success)nid=part.Value+part2.Groups[1].Value;
-                }
-                var warn=new List<string>();
-                if(nid is null)warn.Add("Payment row has no proven national ID");
-                if(payId is null)warn.Add("Payment row has no proven payment number");
-                if(gross.Value-net.Value!=deduction.Value) { /* handled within tolerance above */ }
-                employees.Add(new(nid,payId,name,bank,gross,deduction,net,[],warn,pi+1,pi+1));
-                foreach(var w in warn)issues.Add(new("PAYMENT_REVIEW",w,pi+1));
-                runningNet+=net.Value;runningCount++;hasGroup=true;i=second;
+                if(!completed)issues.Add(new("UNRESOLVED_PAGE_SPLIT","Employee row split across pages could not be reconciled",pending.Value.Page,"error"));
+                pending=null;
             }
-            // A record group may continue onto a subsequent page. Trust only its printed subtotal.
-            foreach(Match m in Regex.Matches(t,@"(?m)^\s*إجمالي?\s+السجل\s*\n\s*([\d,.]+)")){
-                var total=Arabic.Amount(m.Groups[1].Value);
-                var warns=new List<string>();
-                if(total is null) warns.Add("Group net could not be extracted");
-                else if(!hasGroup || Math.Abs(runningNet-total.Value)>.02m)
-                    warns.Add("Employee net sum does not match group reported net");
-                var g=new CoverGroup(bank,branch,runningCount,total,startPage,warns);
-                groups.Add(g);foreach(var w in warns)issues.Add(new("PAYMENT_GROUP_REVIEW",w,pi+1));
-                startPage=pi+2;runningNet=0;runningCount=0;hasGroup=false;
+            for(int index=section+1;index<end;index++){
+                var first=lines[index];if(Currency.Matches(first).Count!=11)continue;
+                var previous=index>section+1?lines[index-1]:"";
+                var before=index>section+2?lines[index-2]:"";
+                var prevName=Regex.IsMatch(previous,@"[\u0621-\u064a]")?previous:
+                    Regex.IsMatch(before,@"[\u0621-\u064a]")?before:"";
+                var region=string.Join(" ",lines.Skip(Math.Max(section+1,index-5)).Take(Math.Min(10,end-Math.Max(section+1,index-5))));
+                // No identity text means an aggregate row, not a payroll employee.
+                if(!Regex.IsMatch(first+prevName,@"[\u0621-\u064a]"))continue;
+                int secondIndex=-1;
+                for(var k=index+1;k<Math.Min(index+4,end);k++)
+                    if(Currency.Matches(lines[k]).Count==11){secondIndex=k;break;}
+                if(secondIndex>=0) {
+                    string identity=secondIndex>index+1?lines[secondIndex-1]:"";
+                    if(ParsePair(first,lines[secondIndex],prevName,identity,region,pi+1,bank))index=secondIndex;
+                }else if(pi+1<pages.Count) {
+                    pending=(first,prevName,region,pi+1,bank);
+                }
+            }
+            // Printed bank-group subtotal is the evidence source; never invent it from rows.
+            var close=Array.FindIndex(lines,l=>Has(l,"اجمالى السجل")||Has(l,"إجمالي السجل"));
+            if(close>=0){
+                decimal? official=null;
+                if(close+1<lines.Length) {
+                   var sumLine=lines[close+1].Trim();
+                   var token=Regex.Match(sumLine,@"^\s*(\d+(?:,\d{3})*\.\d{2})\b");
+                   if(token.Success)official=Arabic.Amount(token.Groups[1].Value);
+                }
+                var warnings=new List<string>();
+                if(official is null)warnings.Add("Official group subtotal is unreadable or fragmented");
+                else if(Math.Abs(official.Value-runningNet)>.02m) warnings.Add("Employee net sum differs from printed group subtotal");
+                if(runningCount==0)warnings.Add("Group has no extracted employee rows");
+                groups.Add(new(bank,branch,runningCount,official,startPage,warnings));
+                foreach(var w in warnings)issues.Add(new("PAYMENT_GROUP_REVIEW",w,pi+1));
+                runningCount=0;runningNet=0;startPage=pi+2;
             }
         }
-        if(hasGroup)issues.Add(new("INCOMPLETE_PAYMENT_GROUP","Group has employee records but no closing subtotal",pages.Count));
-        if(employees.Count==0)issues.Add(new("NO_PAYMENT_ROWS","No verified employee rows extracted",null,"error"));
-        if(groups.Count==0)issues.Add(new("NO_PAYMENT_GROUPS","No group subtotal identified",null,"error"));
-        foreach(var dup in employees.Where(e=>e.NationalId is not null).GroupBy(e=>e.NationalId).Where(g=>g.Count()>1))
-            issues.Add(new("DUPLICATE_EMPLOYEE","Repeated national ID in payment sheet",null,"error"));
+        if(pending is not null) issues.Add(new("TRUNCATED_ROW","PDF ends in the middle of an employee",pending.Value.Page,"error"));
+        if(runningCount>0)issues.Add(new("INCOMPLETE_GROUP","Employee data without closing bank subtotal",pages.Count,"error"));
+        if(employees.Count==0)issues.Add(new("NO_PAYMENT_EMPLOYEES","No reliable payment rows",null,"error"));
+        if(groups.Count==0)issues.Add(new("NO_PAYMENT_GROUPS","No bank group totals",null,"error"));
         return Report(file,ReportKind.PaymentSheet,pages.Count,employees,groups,issues);
     }
     private static ImportReport Report(string file,ReportKind kind,int pages,List<PayrollEmployee> employees,List<CoverGroup> groups,List<ImportIssue> issues){
