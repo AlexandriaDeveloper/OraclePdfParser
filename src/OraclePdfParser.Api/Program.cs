@@ -12,6 +12,8 @@ builder.WebHost.ConfigureKestrel(o=>o.Limits.MaxRequestBodySize=30*1024*1024);
 var app=builder.Build();
 app.UseCors("LocalAngular");
 app.MapGet("/api/health",()=>Results.Ok(new{status="ok"}));
+app.MapGet("/api/imports",async(IImportArchive archive,int? skip,int? take,CancellationToken ct)=>Results.Ok(await archive.ListAsync(skip??0,take??20,ct)));
+app.MapGet("/api/imports/{id:guid}",async(Guid id,IImportArchive archive,CancellationToken ct)=>{var report=await archive.GetAsync(id,ct);return report is null?Results.NotFound():Results.Ok(report);});
 app.MapPost("/api/import",async(HttpRequest request,IPdfTextSource pdf,IPayrollImportService importer,PayrollBatchReconciler reconcile,CancellationToken ct)=>{
     if(!request.HasFormContentType)return Results.BadRequest(new{error="Multipart form-data required"});
     var form=await request.ReadFormAsync(ct);
