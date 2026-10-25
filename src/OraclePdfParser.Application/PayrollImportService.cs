@@ -9,7 +9,7 @@ namespace OraclePdfParser.Application;
 /// </summary>
 public sealed class PayrollImportService : IPayrollImportService {
     private static readonly Regex NationalId = new(@"(?<!\d)\d{14}(?!\d)",RegexOptions.Compiled);
-    private static readonly Regex Account = new(@"(?<!\d)(?:211|411)\d{5}(?!\d)",RegexOptions.Compiled);
+    private static readonly Regex Account = new(@"(?<!\d)\d{8}(?!\d)",RegexOptions.Compiled);
     private static readonly Regex Money = new(@"(?<!\d)\d+(?:,\d{3})*(?:\.\d{1,2})?(?!\d)",RegexOptions.Compiled);
     private static readonly Regex Currency = new(@"(?<!\d)\d+(?:,\d{3})*\.\d{2}(?!\d)",RegexOptions.Compiled);
     private static readonly Regex ReversePay = new(@"(?<!\d)(\d{4,6})-(\d{5,6})(?!\d)",RegexOptions.Compiled);
