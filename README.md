@@ -26,7 +26,7 @@ Open http://localhost:4200 and import one, two or three files. Accepted report k
 - **كافر** — bank-group totals and employee counts, with pages that can continue.
 - **كشوف صرف** — individual payment rows, deductions and bank-group totals, including split RTL fields.
 
-The Angular UI supports search, page references, warnings, downloadable employee CSV, line-item CSV and original JSON review.
+The Angular UI supports search, page references, warnings, bank group totals, a locally saved import history, downloadable employee CSV, line-item CSV and original JSON review.
 
 ## Safety and correctness
 
@@ -36,10 +36,21 @@ The Angular UI supports search, page references, warnings, downloadable employee
 - Payslip earnings / deductions and net including government contributions are checked.
 - Payment gross minus deduction must equal net for each accepted payment row.
 - Cover and payment groups are reconciled in order, with reported totals and number of employees.
-- When multiple files are uploaded, match by national ID, validate net values and report period.
+- When multiple files are uploaded, match by national ID, validate disbursement numbers, gross/net values and report period; canonicalize payment-sheet names from verified payslip identities while retaining original source names.
 - Ambiguous rows, missing identifiers, split numbers, duplicate report types, failed totals and unrecognized columns remain **ReviewRequired**.
 - The application **does not automatically approve payments**.
 - Uploaded PDFs are processed in memory. Do not commit source payslips, national IDs or generated JSON/CSV to the public repository.
+
+## Local import history
+
+The API persists report snapshots and their issue lists transactionally in **SQLite** (via Microsoft.Data.Sqlite) at `src/OraclePdfParser.Api/App_Data/oracle-imports.db`, unless you configure `ImportArchive:Path`. Source PDF bytes are **not** persisted. History can be inspected from the Angular UI or:
+
+```http
+GET http://localhost:5080/api/imports?skip=0&take=20
+GET http://localhost:5080/api/imports/{id}
+```
+
+This local database contains employee financial and identity data. Protect it with OS account permissions and encrypted backups, and do not commit or publish it. Deploy with network restrictions and authentication if shared among multiple users.
 
 ## Private real-file verification
 
@@ -73,7 +84,7 @@ CI tests generated/sample PDFs and deterministic Arabic/financial cases. Actual 
 
 - A successful CI run **does not establish accuracy on the three confidential PDFs**. Run the private verifier before trusting results for payroll use.
 - Complex multicolumn PDF output may contain mangled text (including broken totals). This must remain reviewable instead of guessed.
-- The first iteration provides client-side JSON/CSV export; **SQL Server persistence, historical import identity, roles and approval workflow are not yet implemented**.
+- Local SQLite import history is included. SQL Server integration, role-based approvals, enterprise audit controls and protected multi-user hosting are **not** yet implemented.
 - Designed for local use. Do not expose the API over the internet without authentication, TLS, audit logging and access controls.
 
 See `.github/workflows/ci.yml` for build automation.
