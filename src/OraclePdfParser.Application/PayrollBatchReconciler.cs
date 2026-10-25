@@ -22,6 +22,8 @@ public sealed class PayrollBatchReconciler {
         if(m.Length!=1){Add(sheet,"DUPLICATE_EMPLOYEE","Duplicate payment employee");continue;}
         if(e.Net is not null&&m[0].Net is not null&&Math.Abs(e.Net.Value-m[0].Net.Value)>.02m)
           Add(sheet,"NET_MISMATCH","Employee net differs between payslip and payment sheet");
+        if(e.DisbursementNumber is not null&&m[0].DisbursementNumber is not null&&e.DisbursementNumber!=m[0].DisbursementNumber)
+          Add(sheet,"DISBURSEMENT_MISMATCH","Disbursement number differs between payroll records");
       }
       if(slips.Employees.Count!=sheet.Employees.Count){
          Add(slips,"COUNT_MISMATCH","Payslip and payment sheet employee counts differ");
@@ -47,6 +49,15 @@ public sealed class PayrollBatchReconciler {
       if(people!=slips.Employees.Count){Add(cover,"EMPLOYEE_TOTAL","Total employee count mismatch");Add(slips,"EMPLOYEE_TOTAL","Total employee count mismatch");}
       if(Math.Abs(amount-slipsAmount)>.02m){Add(cover,"NET_TOTAL","Total net mismatch");Add(slips,"NET_TOTAL","Total net mismatch");}
    }
-   return reports.Select(r=>{var issues=r.Issues.Concat(extra[r.Id]).ToArray();return r with{Issues=issues,Status=issues.Length>0?VerificationStatus.ReviewRequired:r.Status};}).ToArray();
+   var canonical=slips?.Employees.Where(e=>e.NationalId is not null)
+     .GroupBy(e=>e.NationalId).Where(g=>g.Count()==1)
+     .ToDictionary(g=>g.Key!,g=>g.First().Name);
+   return reports.Select(r=>{
+     var issues=r.Issues.Concat(extra[r.Id]).ToArray();
+     var persons=r.Kind==ReportKind.PaymentSheet&&canonical is not null?
+       r.Employees.Select(e=>e.NationalId is not null&&canonical.TryGetValue(e.NationalId,out var official)
+          ?e with{SourceName=e.Name,Name=official}:e).ToArray():r.Employees;
+     return r with{Employees=persons,Issues=issues,Status=issues.Length>0?VerificationStatus.ReviewRequired:r.Status};
+   }).ToArray();
  }
 }
