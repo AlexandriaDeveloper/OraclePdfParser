@@ -117,7 +117,7 @@ public sealed class PayrollImportService : IPayrollImportService {
         var entries=new List<PayrollEntry>();
         var state=EntryKind.Informational;string? code=null;var buf=new List<string>();int itemPage=pages[0].Number;
         static bool IgnoreLine(string l)=>l.Length==0 || (Has(l,"الاسم") && Has(l,"القيمة")) ||
-            Has(l,"نظام أوراكل") || Has(l,"المرتب عن شهر") || Has(l,"هذا البيان للمراجعة") || Has(l,"كشف رواتب");
+            Has(l,"نظام أوراكل") || Has(l,"المرتب عن شهر") || Has(l,"هذا البيان للمراجعة") || Has(l,"كشف رواتب") || l.Contains("BR_",StringComparison.OrdinalIgnoreCase);
         void Flush() {
             if(buf.Count==0)return;
             var raw=string.Join(" ",buf);buf.Clear();
@@ -152,6 +152,8 @@ public sealed class PayrollImportService : IPayrollImportService {
                 if(line.TrimStart().StartsWith("x",Ignore)){Flush();code=null;continue;}
                 var match=Account.Match(line);
                 if(match.Success) {
+                    // Continuation earnings can follow the summary on the next page.
+                    if(state==EntryKind.Informational && match.Value.StartsWith("2111",StringComparison.Ordinal)) state=EntryKind.Earning;
                     var prefix=line[..match.Index].Trim();
                     var suffix=line[(match.Index+match.Length)..].Trim();
                     bool atEnd=suffix.Length==0 && prefix.Length>0;
