@@ -4,56 +4,119 @@ namespace OraclePdfParser.Application;
 
 public sealed class PaymentSheetParser
 {
-    private static readonly Regex NameAndValues = new(@"^(?<name>[\p{L}\s_\-]+?)\s+(?<values>\d.*)$", RegexOptions.Compiled);
-    private static readonly Regex Number = new(@"\d+(?:[.,]\d+)*", RegexOptions.Compiled);
+    // All financial values in this report have two decimal digits. Pair a row with the
+    // deduction row through the financial identity, not through X/Y or a fixed line count.
+    private static readonly Regex MoneyRun = new(@"(?<!\d)(?:\d[\d,]*\.\d+\s+){10}\d[\d,]*\.\d+(?!\d)", RegexOptions.Compiled);
+    private static readonly Regex Amount = new(@"\d[\d,]*\.\d+", RegexOptions.Compiled);
+    private static readonly Regex NationalIdFragments = new(@"(?m)(?<!\d)(?<start>\d{12})\s*(?<end>\d{2})\s*$",RegexOptions.Compiled);
+    private static readonly Regex PaymentFragments = new(@"(?<!\d)(?<serial>\d{3,6})-(?<prefix>\d{5,6})(?!\d)",RegexOptions.Compiled);
+    private sealed record CellRun(PdfPageText Page, string Text, int Start, int End, decimal[] Values,
+        bool GroupTotal, string Bank, string Branch, string Group);
+
     public IReadOnlyList<PaymentEntry> Parse(PdfDocumentText doc, List<ValidationIssue> issues)
     {
-        var items = new List<PaymentEntry>();
+        var runs = new List<CellRun>();
         foreach (var page in doc.Pages)
         {
-            var lines = ArabicText.Lines(page.Text).ToArray();
-            string header = string.Join(" ",lines.Take(13));
+            string text = ArabicText.Normalize(page.Text);
+            string header = string.Join(" ",ArabicText.Lines(text).Take(13));
             string group = Header("مجموعة التعيين", "نوع صرف", header);
             string bank = Header("البنك", "الفرع", header);
-            string branch = Header("الفرع", "", header);
-            for (int i=0;i<lines.Length-2;i++)
+            string branch = Regex.Match(text, @"الفرع\s*:\s*(?<value>[^\n]+)").Groups["value"].Value.Trim();
+
+            foreach(Match match in MoneyRun.Matches(text))
             {
-                var payment = Regex.Match(lines[i], @"^(?<serial>\d{3,6})-(?<prefix>\d{6})$");
-                if (!payment.Success) continue;
-                var row = NameAndValues.Match(lines[i+1]);
-                if (!row.Success) { issues.Add(new(IssueSeverity.Warning,"UNPARSED_PAYMENT","سطر اسم الموظف غير مفهوم",page.Number)); continue; }
-                var amounts = Number.Matches(row.Groups["values"].Value).Select(m=>m.Value).ToArray();
-                if (amounts.Length<3 || amounts[^1].Length!=2
-                    || !ArabicText.TryMoney(amounts[^2],out var net)
-                    || !ArabicText.TryMoney(amounts[^3],out var gross))
-                { issues.Add(new(IssueSeverity.Warning,"UNPARSED_PAYMENT_AMOUNT","القيم الإجمالية غير واضحة",page.Number)); continue; }
-                // Oracle prints the last two digits of the payroll register at the end of the first row.
-                var fullPayment = payment.Groups["prefix"].Value + amounts[^1] + "-" + payment.Groups["serial"].Value;
-                string id = "";
-                decimal deduction = 0;
-                if (i+3<lines.Length)
-                {
-                    var first = Regex.Match(lines[i+2], @"^\d{10,13}$");
-                    var rest = Regex.Match(lines[i+3], @"^(?<tail>\d{1,4})\s+(?<ded>\d[\d,.]*)");
-                    if(first.Success && rest.Success)
-                    {
-                        id = first.Value + rest.Groups["tail"].Value;
-                        ArabicText.TryMoney(rest.Groups["ded"].Value,out deduction);
-                    }
-                }
-                if (id.Length!=14)
-                    issues.Add(new(IssueSeverity.Warning,"INVALID_PAYMENT_ID","الرقم القومي غير مكتمل",page.Number));
-                if(Math.Abs(gross-deduction-net)>.02m)
-                    issues.Add(new(IssueSeverity.Warning,"PAYMENT_ROW_MISMATCH","فرق حسابي في سطر كشف الصرف",page.Number,id));
-                items.Add(new PaymentEntry(id,row.Groups["name"].Value.Trim(),fullPayment,gross,deduction,net,bank,branch,group,page.Number));
+                var values = Amount.Matches(match.Value)
+                    .Select(m=>ArabicText.TryMoney(m.Value,out var amount)?amount:(decimal?)null).ToArray();
+                if(values.Length!=11 || values.Any(v=>v is null)) continue;
+                bool groupTotal = text[..match.Index].Split('\n').TakeLast(3)
+                    .Any(line=>ArabicText.Key(line).Contains("اجمال")&&ArabicText.Key(line).Contains("السج"));
+                runs.Add(new CellRun(page,text,match.Index,match.Index+match.Length,
+                    values.Select(v=>v!.Value).ToArray(),groupTotal,bank,branch,group));
             }
         }
-        return items;
+        var payments=new List<PaymentEntry>();
+        var used=new HashSet<int>();
+        for (int i=0;i+1<runs.Count;i++)
+        {
+            var left=runs[i]; var right=runs[i+1];
+            if(left.GroupTotal||right.GroupTotal || used.Contains(i) || used.Contains(i+1)) continue;
+            decimal gross,net;
+            if(Math.Abs(left.Values[9]-right.Values[0]-left.Values[10])<=.02m)
+            {
+                gross=left.Values[9];net=left.Values[10];
+            }
+            else if(Math.Abs(left.Values[1]-right.Values[0]-left.Values[0])<=.02m)
+            {
+                // Some Oracle content streams print columns in reverse on a single row.
+                gross=left.Values[1];net=left.Values[0];
+            }
+            else continue;
+            string between=left.Page.Number==right.Page.Number
+                ?left.Text[left.End..right.Start]
+                :left.Text[left.End..]+"\n"+right.Text[..right.Start];
+            var idParts=NationalIdFragments.Match(between);
+            if(!idParts.Success)
+            {
+                issues.Add(new(IssueSeverity.Error,"MISSING_PAYMENT_ID",
+                    "تعذر استخراج الرقم القومي من صف الصرف",left.Page.Number));
+                continue;
+            }
+            string nationalId=idParts.Groups["start"].Value+idParts.Groups["end"].Value;
+            string name=ReadName(left.Text,left.Start,between);
+            if(name.Length==0)
+                issues.Add(new(IssueSeverity.Warning,"MISSING_PAYMENT_NAME","تعذر تحديد اسم الموظف من الصف",left.Page.Number,nationalId));
+            string? paymentNumber=ReadPaymentNumber(left.Text,left.Start,between);
+            if(paymentNumber==null)
+                issues.Add(new(IssueSeverity.Warning,"PARTIAL_PAYMENT_NUMBER","رقم الصرف غير مكتمل في النص",left.Page.Number,nationalId));
+            payments.Add(new PaymentEntry(nationalId,name,paymentNumber,gross,right.Values[0],
+                net,left.Bank,left.Branch,left.Group,left.Page.Number));
+            used.Add(i);used.Add(i+1);
+        }
+        // Any unmatched financial sequences may represent a damaged or unsupported layout.
+        // Never silently treat a partial parse as a complete import.
+        var nonTotals=Enumerable.Range(0,runs.Count).Where(i=>!runs[i].GroupTotal&&!used.Contains(i)).ToList();
+        if(nonTotals.Count>0)
+            issues.Add(new(IssueSeverity.Warning,"UNPAIRED_FINANCIAL_ROWS",
+                $"{nonTotals.Count} سطر مالي لم يرتبط بحركة صرف موثقة",runs[nonTotals[0]].Page.Number));
+        return payments;
     }
+
+    private static string ReadName(string text,int start,string between)
+    {
+        var candidates=text[..start].Split('\n').Select(s=>s.Trim()).ToArray();
+        var selected=new List<string>();
+        for(int i=candidates.Length-1;i>=0 && selected.Count<3;i--)
+        {
+            string row=candidates[i];
+            if(row.Length==0) continue;
+            if(Regex.IsMatch(row,@"^[\p{L}\s_\-]+$") && row.Any(ch=>ch>='ء'&&ch<='ي'))
+                selected.Insert(0,row);
+            else break;
+        }
+        var name=string.Join(" ",selected);
+        // Last surname may appear after the net amount, before the national ID.
+        var beforeId=Regex.Match(between,@"(?s)^(.*?)\d{12}").Groups[1].Value;
+        var tail=Regex.Match(beforeId,@"(?:^|\s)(?:05|105)\s+(?<name>[\p{L}][\p{L}\s]*?)(?=\s+\d{3,6}-\d{5,6}|\s*$)");
+        if(tail.Success) name += " "+tail.Groups["name"].Value.Trim();
+        return Regex.Replace(name.Trim(),@"\s+"," ");
+    }
+
+    private static string? ReadPaymentNumber(string text,int start,string between)
+    {
+        string near=text[Math.Max(0,start-220)..start]+" "+Regex.Match(between,@"(?s)^.*?(?=\d{12})").Value;
+        var parts=PaymentFragments.Matches(near);
+        if(parts.Count==0) return null;
+        var match=parts[^1];
+        string prefix=match.Groups["prefix"].Value;
+        string suffix=prefix.Length==5?"105":"05";
+        return prefix+suffix+"-"+match.Groups["serial"].Value;
+    }
+
     internal static string Header(string begin,string end,string text)
     {
-        var pattern = Regex.Escape(begin)+@"\s*:\s*(.*?)"+(end.Length>0?@"\s+"+Regex.Escape(end)+@"\s*:":"$");
-        var found = Regex.Match(text,pattern,RegexOptions.Singleline);
+        var pattern=Regex.Escape(begin)+@"\s*:\s*(.*?)"+(end.Length>0?@"\s+"+Regex.Escape(end)+@"\s*:":"$");
+        var found=Regex.Match(text,pattern,RegexOptions.Singleline);
         return found.Success?found.Groups[1].Value.Trim():"";
     }
 }
@@ -71,7 +134,7 @@ public sealed class CoverParser
             string header = string.Join(" ",ArabicText.Lines(text).Take(10));
             var nextGroup = PaymentSheetParser.Header("سجل رقم","نوع الصرف",header);
             var nextBank = PaymentSheetParser.Header("البنك","الفرع",header);
-            var nextBranch = PaymentSheetParser.Header("الفرع","",header);
+            var nextBranch = Regex.Match(text,@"الفرع\s*:\s*(?<value>[^\n]+)").Groups["value"].Value.Trim();
             if(nextGroup.Length>0) group=nextGroup;
             if(nextBank.Length>0) bank=nextBank;
             if(nextBranch.Length>0) branch=nextBranch;

@@ -103,7 +103,7 @@ public sealed class ParserTests
             8867-302001
             موظف اختبار 100.00 0.00 0.00 0.00 0.00 0.00 200.00 0.00 0.00 200.00 170.00 05
             270121802007
-            97 30.00 0.00 0.00 0.00
+            97 30.00 0.00 0.00 0.00 0.00 10.00 20.00 0.00 0.00 0.00 0.00
             """);
         var issues=new List<ValidationIssue>();
         var entry=Assert.Single(new PaymentSheetParser().Parse(new PdfDocumentText([page]),issues));
@@ -112,6 +112,41 @@ public sealed class ParserTests
         Assert.Equal(200m,entry.Earnings);
         Assert.Equal(30m,entry.Deductions);
         Assert.Equal(170m,entry.Net);
+        Assert.DoesNotContain(issues,i=>i.Severity==IssueSeverity.Error);
+    }
+
+    [Fact]
+    public void PaymentSheet_SupportsReversedAndCrossPageRowsAndSkipsGroupTotals()
+    {
+        var doc=new PdfDocumentText([
+         new PdfPageText(1,"""
+          كشف صرف المرتبات
+          مجموعة التعيين: اختبار نوع صرف:دفع الكترونى البنك: بنك مصر الفرع: مركز البطاقات
+          1
+          8900-302001
+          احمد اختبار 100.00 0.00 0.00 0.00 0.00 0.00 200.00 0.00 0.00 200.00 170.00 05
+          270121802007
+          """),
+         new PdfPageText(2,"""
+          97 30.00 0.00 0.00 0.00 0.00 10.00 20.00 0.00 0.00 0.00 0.00
+          2
+          8901-302001
+          05
+          موظف اخر
+          180.00 200.00 0.00 0.00 190.00 0.00 0.00 0.00 100.00 0.00 90.00
+          280121802007
+          98 20.00 0.00 0.00 0.00 0.00 10.00 10.00 0.00 0.00 0.00 0.00
+          إجمالــــــى السجل
+          350.00 400.00 0.00 0.00 380.00 0.00 0.00 0.00 200.00 0.00 190.00
+          50.00 0.00 0.00 0.00 0.00 20.00 30.00 0.00 0.00 0.00 0.00
+          """)
+        ]);
+        var issues=new List<ValidationIssue>();
+        var parsed=new PaymentSheetParser().Parse(doc,issues);
+        Assert.Equal(2,parsed.Count);
+        Assert.Equal(350m,parsed.Sum(e=>e.Net));
+        Assert.Equal("27012180200797",parsed[0].NationalId);
+        Assert.Equal("28012180200798",parsed[1].NationalId);
         Assert.DoesNotContain(issues,i=>i.Severity==IssueSeverity.Error);
     }
 
