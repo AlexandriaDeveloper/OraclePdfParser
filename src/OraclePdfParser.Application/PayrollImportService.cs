@@ -293,6 +293,9 @@ public sealed class PayrollImportService : IPayrollImportService {
                 var warnings=new List<string>();
                 if(official is null)warnings.Add("Official group subtotal is unreadable or fragmented");
                 else if(Math.Abs(official.Value-runningNet)>.02m) warnings.Add("Employee net sum differs from printed group subtotal");
+                var declared=Regex.Match(t,@"البالغ\s+عددهم\s+(\d+)");
+                if(declared.Success && int.TryParse(declared.Groups[1].Value,out var officialCount) && officialCount!=runningCount)
+                    warnings.Add("Extracted employee count differs from declared bank group count");
                 if(runningCount==0)warnings.Add("Group has no extracted employee rows");
                 groups.Add(new(bank,branch,runningCount,official,startPage,warnings));
                 foreach(var w in warnings)issues.Add(new("PAYMENT_GROUP_REVIEW",w,pi+1));
