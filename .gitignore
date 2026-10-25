@@ -5,3 +5,10 @@
 .vscode/
 *.user
 .env
+
+**/App_Data/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+**/test-results/
