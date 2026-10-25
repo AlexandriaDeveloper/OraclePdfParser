@@ -216,26 +216,50 @@ public sealed class PayrollImportService : IPayrollImportService {
             }else return false;
             var ms=Currency.Matches(first);var prefix=first[..ms[0].Index].Trim();
             var suffix=first[(ms[^1].Index+ms[^1].Length)..].Trim();
+            var context=region.Split('\n',StringSplitOptions.TrimEntries|StringSplitOptions.RemoveEmptyEntries);
             var name=Regex.IsMatch(prefix,@"[\u0621-\u064a]")?prefix:previous;
-            // Split lines in Oracle reports may put a continuation surname after the values.
+            if(!Regex.IsMatch(prefix,@"[\u0621-\u064a]") && context.Length>=3){
+                var prior=context[^3];
+                if(Regex.IsMatch(previous,@"[\u0621-\u064a]") && previous.Split(' ',StringSplitOptions.RemoveEmptyEntries).Length==1
+                    && Regex.IsMatch(prior,@"[\u0621-\u064a]") && prior.Split(' ',StringSplitOptions.RemoveEmptyEntries).Length>=2)
+                    name=prior+" "+previous;
+            }
+            // Split surname may follow the last numeric column, before an account identifier.
             var tail=Regex.Replace(suffix,@"\d{4,6}-\d{5,6}|\b\d{2,3}\b","").Trim();
-            if(tail.Length>1&&Regex.IsMatch(tail,@"[\u0621-\u064a]"))name=(name+" "+tail).Trim();
+            if(tail.Length>1 && Regex.IsMatch(tail,@"[\u0621-\u064a]"))name=(name+" "+tail).Trim();
             name=Regex.Replace(name,@"\s+"," ").Trim();
-            if(name.Length<5||!Regex.IsMatch(name,@"[\u0621-\u064a]") || Has(name,"اجمالى السجل") || Has(name,"إجمالي السجل"))return false;
+            if(name.Split(' ',StringSplitOptions.RemoveEmptyEntries).Length<2
+                || !Regex.IsMatch(name,@"[\u0621-\u064a]")
+                || Has(name,"اجمالى السجل") || Has(name,"إجمالي السجل")
+                || Has(name,"الاستقطاعات"))return false;
             var n12=Regex.Match(identity,@"(?<!\d)\d{12}(?!\d)");
             var suffixId=Regex.Match(second,@"^\s*(\d{2})\s");
             var national=n12.Success&&suffixId.Success?n12.Value+suffixId.Groups[1].Value:null;
-            // Only use identifiers in this employee's immediate text, never the preceding employee.
+            // Prefer an identifier embedded in the same row; otherwise the closest
+            // preceding 4–6 / 5–6 digit Oracle identifier, delimited by this employee's row.
             var reversed=ReversePay.Match(suffix);
-            if(!reversed.Success)reversed=ReversePay.Match(previous);
-            if(!reversed.Success)reversed=ReversePay.Match(first);
+            var linesBefore=context.ToArray();
+            if(!reversed.Success){
+                var candidates=ReversePay.Matches(region).Cast<Match>().ToArray();
+                if(candidates.Length>0)reversed=candidates[^1];
+            }
             string? payment=null;
             if(reversed.Success) {
                 var head=reversed.Groups[2].Value;
-                var required=head.Length==6?2:head.Length==5?3:0;
-                if(required>0) {
+                var width=head.Length==6?2:head.Length==5?3:0;
+                if(width>0){
                     var ending=Regex.Matches(suffix,@"(?<!\d)\d{2,3}(?!\d)")
-                        .Select(m=>m.Value).FirstOrDefault(x=>x.Length==required);
+                        .Select(m=>m.Value).FirstOrDefault(value=>value.Length==width);
+                    if(ending is null){
+                        var codeLine=Array.FindLastIndex(linesBefore,
+                            x=>ReversePay.IsMatch(x));
+                        if(codeLine>=0){
+                            // Oracle may print the payment prefix digits on their own text line.
+                            ending=linesBefore.Skip(codeLine+1).Take(Math.Max(0,linesBefore.Length-codeLine-2))
+                                .Select(x=>x.Trim())
+                                .FirstOrDefault(x=>x.Length==width && x.All(char.IsDigit));
+                        }
+                    }
                     if(ending is not null)payment=head+ending+"-"+reversed.Groups[1].Value;
                 }
             }
@@ -270,16 +294,16 @@ public sealed class PayrollImportService : IPayrollImportService {
             }
             for(int index=section+1;index<end;index++){
                 var first=lines[index];if(Currency.Matches(first).Count!=11)continue;
-                // Reject summary/amount-only lines, even if a nearby heading contains Arabic text.
+                // Employee names may be split onto lines before the monetary columns;
+                // never classify a group-total heading as an employee name.
                 var initialPrefix=first[..Currency.Match(first).Index].Trim();
-                if(!Regex.IsMatch(initialPrefix,@"[\u0621-\u064a]") || Has(initialPrefix,"اجمالى") || Has(initialPrefix,"إجمالي"))continue;
                 var previous=index>section+1?lines[index-1]:"";
                 var before=index>section+2?lines[index-2]:"";
-                var prevName=Regex.IsMatch(previous,@"[\u0621-\u064a]")?previous:
-                    Regex.IsMatch(before,@"[\u0621-\u064a]")?before:"";
-                var region=string.Join(" ",lines.Skip(Math.Max(section+1,index-5)).Take(Math.Min(10,end-Math.Max(section+1,index-5))));
-                // No identity text means an aggregate row, not a payroll employee.
-                if(!Regex.IsMatch(first+prevName,@"[\u0621-\u064a]"))continue;
+                var nameHint=initialPrefix.Length>0?initialPrefix:previous;
+                if((Has(nameHint,"اجمالى") || Has(nameHint,"إجمالي") || Has(nameHint,"الاستقطاعات"))
+                    || !Regex.IsMatch(nameHint,@"[\u0621-\u064a]"))continue;
+                var begin=Math.Max(section+1,index-6);
+                var region=string.Join("\n",lines.Skip(begin).Take(index-begin+1));
                 int secondIndex=-1;
                 for(var k=index+1;k<Math.Min(index+4,end);k++)
                     if(Currency.Matches(lines[k]).Count==11){secondIndex=k;break;}
