@@ -5,6 +5,8 @@ builder.Services.ConfigureHttpJsonOptions(options=>options.SerializerOptions.Con
 builder.Services.AddSingleton<IPayrollImportService,PayrollImportService>();
 builder.Services.AddSingleton<IPdfTextSource,PdfiumTextSource>();
 builder.Services.AddSingleton<PayrollBatchReconciler>();
+var path=builder.Configuration["ImportArchive:Path"]??Path.Combine(builder.Environment.ContentRootPath,"App_Data","oracle-imports.db");
+builder.Services.AddSingleton<IImportArchive>(_=>new SqliteImportArchive(path));
 builder.Services.AddCors(o=>o.AddPolicy("LocalAngular",p=>p.WithOrigins("http://localhost:4200").AllowAnyHeader().AllowAnyMethod()));
 builder.WebHost.ConfigureKestrel(o=>o.Limits.MaxRequestBodySize=30*1024*1024);
 var app=builder.Build();
