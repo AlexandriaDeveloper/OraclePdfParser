@@ -1,0 +1,65 @@
+<div class="app-layout">
+ <aside class="sidebar">
+  <div class="brand"><span class="brand-mark">⌘</span><div><strong>ORACLE PDF</strong><small>PAYROLL INTELLIGENCE</small></div></div>
+  <p class="nav-title">مساحة العمل</p>
+  <div class="nav-link active"><span class="nav-symbol">▦</span> استيراد كشوف المرتبات</div>
+  <div class="nav-link" (click)="tab.set('employees')"><span class="nav-symbol">♙</span> الموظفون</div>
+  <div class="nav-link" (click)="tab.set('issues')"><span class="nav-symbol">◇</span> مراجعة البيانات</div>
+  <div class="sidebar-foot"><div class="status-dot"></div><span>قراءة محلية بدون OCR</span><small>بدون إحداثيات ثابتة</small></div>
+ </aside>
+ <main class="workspace">
+   <header class="topbar"><div class="crumb">النظام / <strong>استيراد المرتبات</strong></div><div class="top-tag">نظام أوراكل للرواتب <span>•</span> DDD / .NET</div></header>
+   <div class="content">
+     <div class="eyebrow">معالجة مستندات الرواتب</div>
+     <section class="heading"><div><h1>استيراد وتحليل كشوف المرتبات</h1><p>استخرج بنود كل موظف، راجع الأرقام، وطابق التقارير المختلفة تلقائيًا.</p></div><span class="heading-icon">◫</span></section>
+
+     <section class="upload-card">
+       <div class="section-head"><div><span class="section-tag">01 / الملفات</span><h2>مصادر البيانات</h2></div><span class="optional">ملف واحد أو حتى 3 ملفات PDF</span></div>
+       <label class="dropzone" for="filePicker"><div class="upload-icon">↑</div><strong>اختر ملفات أوراكل للبدء</strong><span>صرفية موظف، كافر، كشوف صرف — بأي مجموعة متاحة</span><em>اختيار ملفات PDF</em></label>
+       <input hidden id="filePicker" type="file" accept=".pdf,application/pdf" multiple (change)="onFiles($event)">
+       <div class="file-list" *ngIf="files().length">
+        <div *ngFor="let file of files();index as i" class="file-row"><span class="file-icon">PDF</span><div class="file-details"><strong>{{file.name}}</strong><span>{{(file.size/1024/1024).toFixed(2)}} MB</span></div><button class="icon-button" type="button" (click)="removeFile(i)" aria-label="حذف الملف">×</button></div>
+       </div>
+       <div class="upload-actions"><span>لا تُرفع الملفات إلى GitHub، بل إلى الـAPI المتصل بتطبيقك.</span><button type="button" class="primary" [disabled]="busy() || !files().length" (click)="import()">{{busy()?'جاري التحليل...':'تحليل الملفات ومراجعتها'}} <span>←</span></button></div>
+       <p class="error" *ngIf="error()">{{error()}}</p>
+     </section>
+
+     <ng-container *ngIf="result() as report">
+       <div class="section-head result-heading"><div><span class="section-tag">02 / التحليل</span><h2>نتيجة الاستيراد</h2></div><button class="secondary" (click)="exportEmployees()" [disabled]="!report.employees.length">تصدير الموظفين CSV ↓</button></div>
+       <div class="stats">
+         <div class="stat"><span>صرفية موظف</span><strong>{{report.employees.length}}</strong><small>سجل موظف تفصيلي</small></div>
+         <div class="stat"><span>كشوف الصرف</span><strong>{{report.payments.length}}</strong><small>حركة صرف</small></div>
+         <div class="stat"><span>مجموعات الكافر</span><strong>{{report.covers.length}}</strong><small>مجموعة بنكية</small></div>
+         <div class="stat" [class.danger-stat]="report.hasBlockingErrors"><span>أخطاء تتطلب مراجعة</span><strong>{{overallIssues().length}}</strong><small>{{report.hasBlockingErrors?'غير صالح للاعتماد تلقائيًا':'راجع التحذيرات إن وجدت'}}</small></div>
+       </div>
+       <div class="net-strip"><span>صافي المرتبات</span><div><label>الصرفية <strong>{{money(report.netFromPayslips)}}</strong></label><label>كشوف الصرف <strong>{{money(report.netFromPayments)}}</strong></label><label>الكافر <strong>{{money(report.netFromCovers)}}</strong></label></div></div>
+       <section class="results-card">
+        <nav class="tabs"><button [class.current]="tab()==='employees'" (click)="tab.set('employees')">الموظفون</button><button [class.current]="tab()==='payments'" (click)="tab.set('payments')">كشوف الصرف</button><button [class.current]="tab()==='covers'" (click)="tab.set('covers')">الكافر</button><button [class.current]="tab()==='issues'" (click)="tab.set('issues')">الأخطاء والتنبيهات ({{overallIssues().length}})</button></nav>
+        <ng-container *ngIf="tab()==='employees'">
+          <div class="table-toolbar"><input aria-label="البحث عن موظف" type="search" placeholder="ابحث بالاسم، الرقم القومي أو رقم الصرف..." [ngModel]="search()" (ngModelChange)="search.set($event)"><select aria-label="تصفية النتائج" [ngModel]="view()" (ngModelChange)="view.set($event)"><option value="all">جميع الموظفين</option><option value="errors">بحاجة لمراجعة</option></select></div>
+          <div class="table-scroll"><table><thead><tr><th>الموظف</th><th>رقم الصرف</th><th>الاستحقاقات</th><th>الاستقطاعات</th><th>الصافي</th><th>المراجعة</th></tr></thead><tbody>
+            <tr *ngFor="let employee of employees()" (click)="showEmployee(employee)" class="click-row"><td><strong>{{employee.name}}</strong><small>المستند ص {{employee.firstPage}}–{{employee.lastPage}}</small></td><td class="mono">{{employee.paymentNumber||'—'}}</td><td>{{money(employee.earnings)}}</td><td>{{money(employee.deductions)}}</td><td class="bold-cell">{{money(employee.net)}}</td><td><span class="check-pill" [class.issue-pill]="employee.issues.length">{{employee.issues.length?employee.issues.length+' تنبيه':'سليم حسابيًا'}}</span></td></tr>
+            <tr *ngIf="!employees().length"><td colspan="6" class="empty">لا توجد بيانات موظفين لهذا البحث أو لم يُرفَع ملف صرفية موظف.</td></tr>
+          </tbody></table></div>
+        </ng-container>
+        <ng-container *ngIf="tab()==='payments'"><div class="table-scroll"><table><thead><tr><th>الموظف</th><th>البنك</th><th>الاستحقاقات</th><th>الاستقطاعات</th><th>الصافي</th></tr></thead><tbody><tr *ngFor="let payment of report.payments"><td><strong>{{payment.name}}</strong><small>{{payment.paymentNumber}}</small></td><td>{{payment.bank}}</td><td>{{money(payment.earnings)}}</td><td>{{money(payment.deductions)}}</td><td>{{money(payment.net)}}</td></tr><tr *ngIf="!report.payments.length"><td colspan="5" class="empty">لم يتم رفع كشوف صرف.</td></tr></tbody></table></div></ng-container>
+        <ng-container *ngIf="tab()==='covers'"><div class="table-scroll"><table><thead><tr><th>البنك</th><th>الفرع</th><th>المجموعة</th><th>العاملون</th><th>الصافي</th></tr></thead><tbody><tr *ngFor="let cover of report.covers"><td>{{cover.bank}}</td><td>{{cover.branch}}</td><td>{{cover.group}}</td><td>{{cover.workers}}</td><td>{{money(cover.net)}}</td></tr><tr *ngIf="!report.covers.length"><td colspan="5" class="empty">لم يتم رفع ملف كافر.</td></tr></tbody></table></div></ng-container>
+        <ng-container *ngIf="tab()==='issues'"><div class="issues"><p *ngIf="!overallIssues().length" class="empty">لم يرصد المحرك تنبيهات. يُرجى التأكد أيضًا من مطابقة الملفات الأصلية.</p><div *ngFor="let issue of overallIssues()" class="issue-row" [class.issue-error]="issue.severity===2"><span>{{issue.severity===2?'!':'i'}}</span><div><strong>{{issue.code}}</strong><p>{{issue.message}}</p><small *ngIf="issue.page">صفحة {{issue.page}}</small></div></div></div></ng-container>
+       </section>
+       <section class="docs-source"><strong>تقارير هذا الاستيراد</strong><div><span *ngFor="let doc of report.documents">{{typeName(doc.type)}} — {{doc.fileName}} ({{doc.pages}} صفحة)</span></div></section>
+     </ng-container>
+
+     <section *ngIf="!result() && importList().length" class="history"><h2>عمليات سابقة</h2><div *ngFor="let previous of importList()" class="history-row" (click)="openPrevious(previous.id)"><div><strong>{{previous.importedAt | date:'medium':'':'ar-EG'}}</strong><small>{{previous.employees}} موظف / {{previous.payments}} صرفية</small></div><span>{{previous.blocking?'تحتاج مراجعة':'عرض التفاصيل ←'}}</span></div></section>
+     <footer>Oracle PDF Parser · معالجة النصوص العربية بدون تخمين البنود أو إحداثيات ثابتة</footer>
+   </div>
+ </main>
+ <div *ngIf="selected() as employee" class="overlay" (click)="closeEmployee()">
+   <aside class="drawer" (click)="$event.stopPropagation()">
+     <div class="drawer-head"><div><span class="section-tag">تفاصيل الموظف</span><h2>{{employee.name}}</h2><p>رقم الصرف: {{employee.paymentNumber||'—'}}</p></div><button class="icon-button" (click)="closeEmployee()">×</button></div>
+     <div class="employee-meta"><div>البنك <strong>{{employee.bank||'—'}}</strong></div><div>الفرع <strong>{{employee.branch||'—'}}</strong></div><div>الصفحات <strong>{{employee.firstPage}}–{{employee.lastPage}}</strong></div></div>
+     <div class="drawer-net"><span>صافي المرتب</span><strong>{{money(employee.net)}} ج.م</strong></div>
+     <div class="drawer-items"><h3>تفاصيل البنود <small>({{employee.items.length}})</small></h3><div *ngFor="let item of employee.items;trackBy:trackItem" class="item-row"><div><strong>{{item.originalName}}</strong><small>{{item.accountCode||'—'}} · {{itemKind(item.kind)}} · صفحة {{item.sourcePage}}</small></div><span>{{money(item.amount)}}</span></div></div>
+     <div *ngIf="employee.issues.length" class="drawer-warnings"><h3>تنبيهات الموظف</h3><p *ngFor="let issue of employee.issues">{{issue.message}}</p></div>
+   </aside>
+ </div>
+</div>
