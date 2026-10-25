@@ -296,6 +296,19 @@ public sealed class PayrollImportService : IPayrollImportService {
                    var token=Regex.Match(sumLine,@"^\s*(\d+(?:,\d{3})*\.\d{2})\b");
                    if(token.Success)official=Arabic.Amount(token.Groups[1].Value);
                 }
+                // Some Oracle reports split the final decimal digit onto the next text line.
+                // Recover only a unique printed candidate equal to the independently summed rows.
+                if(official is null) {
+                    var reconstructed=new List<decimal>();
+                    for(var j=close+1;j<Math.Min(lines.Length-1,close+7);j++){
+                        var part=Regex.Match(lines[j],@"(?<!\d)(\d{4,}\.\d)\s*$");
+                        if(!part.Success || !Regex.IsMatch(lines[j+1],@"^\d$"))continue;
+                        if(Arabic.Amount(part.Groups[1].Value+lines[j+1]) is {} candidate)
+                            reconstructed.Add(candidate);
+                    }
+                    if(reconstructed.Count(x=>Math.Abs(x-runningNet)<=.02m)==1)
+                        official=reconstructed.Single(x=>Math.Abs(x-runningNet)<=.02m);
+                }
                 var warnings=new List<string>();
                 if(official is null)warnings.Add("Official group subtotal is unreadable or fragmented");
                 else if(Math.Abs(official.Value-runningNet)>.02m) warnings.Add("Employee net sum differs from printed group subtotal");
