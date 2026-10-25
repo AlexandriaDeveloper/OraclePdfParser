@@ -11,7 +11,7 @@ public sealed class ImportTests {
  [Fact] public void UnknownReportFailsClosed()=>Assert.Equal(VerificationStatus.Rejected,new PayrollImportService().Import("x.pdf",["test"]).Status);
  [Fact] public void PayslipRecognizesPageContinuationAndGovernmentShares(){
   var pages=new[]{
-   "نظام أوراكل للرواتب\nاسم الموظف: موظف تجريبي محمد علي رقم الصرف: 30200105-54865 الرقم القومى: 29001131804917\nالبنك: بنك مصر الفرع: الاسكندرية\nالاستحقاقات\n21110442 بدل الجامعة ١٠٠٫٠٠\nاجمالي الاستحقاقات ١٠٠٫٠٠\n21120202 حكومة ١ إصابة عمل ٥٫٠٠\n21120202 حكومة 0.25% إصابة عمل ٥٫٠٠\n21120201 حكومة ٣ تأمين صحي ٥٫٠٠\nالاستقطاعات\n41110201 مؤمن ٩ ٤٠٫٠٠\nاجمالي الاستقطاعات ٤٠٫٠٠",
+   "نظام أوراكل للرواتب\nاسم الموظف: موظف تجريبي محمد علي رقم الصرف: 00000000-00000 الرقم القومى: 00000000000000\nالبنك: بنك مصر الفرع: الاسكندرية\nالاستحقاقات\n21110442 بدل الجامعة ١٠٠٫٠٠\nاجمالي الاستحقاقات ١٠٠٫٠٠\n21120202 حكومة ١ إصابة عمل ٥٫٠٠\n21120202 حكومة 0.25% إصابة عمل ٥٫٠٠\n21120201 حكومة ٣ تأمين صحي ٥٫٠٠\nالاستقطاعات\n41110201 مؤمن ٩ ٤٠٫٠٠\nاجمالي الاستقطاعات ٤٠٫٠٠",
    "نظام أوراكل للرواتب\n21120101 حكومة ١٢ شيخوخة ٥٫٠٠\nالصافى: ٨٠٫٠٠"
   };
   var r=new PayrollImportService().Import("salary.pdf",pages);
@@ -35,13 +35,13 @@ public sealed class ImportTests {
  [Fact] public void PaymentSheetReconcilesSafelyWithoutCoordinates(){
   var first=string.Join(" ",new[]{"100.00","0.00","0.00","0.00","0.00","0.00","0.00","0.00","0.00","100.00","80.00"});
   var second=string.Join(" ",new[]{"20.00","0.00","0.00","0.00","0.00","0.00","0.00","0.00","0.00","0.00","0.00"});
-  var txt="وزارة المالية\nكشف صرف المرتبات\nالاستقطاعات\nأخرى\nجملة\nالاستقطاعات\n1\n8867-302001\nموظف تجريبي محمد علي "+first+" 05\n290011318049\n17 "+second+"\nإجمالى السجل\n80.00\nإقرار";
+  var txt="وزارة المالية\nكشف صرف المرتبات\nالاستقطاعات\nأخرى\nجملة\nالاستقطاعات\n1\n8867-000000\nموظف تجريبي محمد علي "+first+" 05\n000000000000\n17 "+second+"\nإجمالى السجل\n80.00\nإقرار";
   var r=new PayrollImportService().Import("payments.pdf",[txt]);
   Assert.Equal(ReportKind.PaymentSheet,r.Kind);
   Assert.Single(r.Employees);
   Assert.Equal(80m,r.Employees[0].Net);
-  Assert.Equal("29001131804917",r.Employees[0].NationalId);
-  Assert.Equal("30200105-8867",r.Employees[0].DisbursementNumber);
+  Assert.Equal("00000000000000",r.Employees[0].NationalId);
+  Assert.Equal("00000005-8867",r.Employees[0].DisbursementNumber);
   Assert.Single(r.Groups);
   Assert.Equal(80m,r.Groups[0].TotalNet);
  }
