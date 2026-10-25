@@ -16,7 +16,7 @@ app.MapPost("/api/import",async(HttpRequest request,IPdfTextSource pdf,IPayrollI
     var results=new List<object>();
     foreach(var file in files) {
         if(file.Length is <=0 or >30*1024*1024)return Results.BadRequest(new{error="Invalid file size"});
-        await using var upload=file.OpenReadStream(30*1024*1024);
+        await using var upload=file.OpenReadStream();
         var prefix=new byte[5]; if(await upload.ReadAsync(prefix,ct)!=5 || System.Text.Encoding.ASCII.GetString(prefix)!="%PDF-")
             return Results.BadRequest(new{error="Only actual PDF files are accepted"});
         using var buffer=new MemoryStream();await buffer.WriteAsync(prefix,ct);await upload.CopyToAsync(buffer,ct);
