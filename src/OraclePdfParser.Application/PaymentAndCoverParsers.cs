@@ -86,19 +86,28 @@ public sealed class PaymentSheetParser
     {
         var candidates=text[..start].Split('\n').Select(s=>s.Trim()).ToArray();
         var selected=new List<string>();
+        var headerWords=new HashSet<string>(StringComparer.Ordinal)
+        {
+            "جمله","الاستقطاعات","استقطاعات","اخري","الاجمالي","القيمه","الاسم",
+            "موحده","ضريبه","تامينات","شامل","اقساط"
+        };
         for(int i=candidates.Length-1;i>=0 && selected.Count<3;i--)
         {
             string row=candidates[i];
             if(row.Length==0) continue;
-            if(Regex.IsMatch(row,@"^[\p{L}\s_\-]+$") && row.Any(ch=>ch>='ء'&&ch<='ي'))
+            if(Regex.IsMatch(row,@"^[\p{L}\s_\-]+$") && row.Any(ch=>ch>='ء'&&ch<='ي')
+                && !headerWords.Contains(ArabicText.Key(row)))
                 selected.Insert(0,row);
             else break;
         }
         var name=string.Join(" ",selected);
-        // Last surname may appear after the net amount, before the national ID.
-        var beforeId=Regex.Match(between,@"(?s)^(.*?)\d{12}").Groups[1].Value;
-        var tail=Regex.Match(beforeId,@"(?:^|\s)(?:05|105)\s+(?<name>[\p{L}][\p{L}\s]*?)(?=\s+\d{3,6}-\d{5,6}|\s*$)");
-        if(tail.Success) name += " "+tail.Groups["name"].Value.Trim();
+        // Surnames sometimes occur AFTER the net amount. Keep Arabic text before the
+        // identity fragments; exclude a new-page header when a payroll row spans pages.
+        var beforeId=Regex.Match(between,@"(?s)^.*?(?=\d{12})").Value;
+        int nextHeader=beforeId.IndexOf("وزارة",StringComparison.Ordinal);
+        if(nextHeader>=0) beforeId=beforeId[..nextHeader];
+        var surnames=Regex.Matches(beforeId,@"[ء-ي]+").Select(m=>m.Value).ToArray();
+        if(surnames.Length>0) name+=" "+string.Join(" ",surnames);
         return Regex.Replace(name.Trim(),@"\s+"," ");
     }
 
