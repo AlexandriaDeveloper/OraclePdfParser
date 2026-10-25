@@ -13,6 +13,7 @@ jobs:
           dotnet-version: '8.0.x'
       - run: dotnet test tests/OraclePdfParser.Tests/OraclePdfParser.Tests.csproj --configuration Release
       - run: dotnet build src/OraclePdfParser.Api/OraclePdfParser.Api.csproj --configuration Release
+      - run: dotnet build tools/OraclePdfParser.Verify/OraclePdfParser.Verify.csproj --configuration Release
   angular:
     runs-on: ubuntu-latest
     defaults:
