@@ -194,6 +194,12 @@ public sealed class PayrollImportService : IPayrollImportService {
             groups.Add(new(bank,branch,count,net,start,warns));
             foreach(var w in warns)issues.Add(new("COVER_REVIEW",w,i+1));
         }
+        // A new cover group starts at its standalone entitlement heading.
+        // This is a semantic boundary, not a page number or a fixed column position.
+        var declaredGroups=pages.Count(page=>Arabic.Lines(page).Any(line=>K(line)==K("الاستحقاقات")));
+        if(declaredGroups!=groups.Count)
+            issues.Add(new("INCOMPLETE_COVER_GROUPS",
+                $"Found {declaredGroups} group openings but {groups.Count} closing totals",null,"error"));
         if(groups.Count==0)issues.Add(new("NO_COVER_GROUPS","No recognized group totals",null,"error"));
         return Report(file,ReportKind.Cover,pages.Count,[],groups,issues);
     }
