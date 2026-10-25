@@ -213,7 +213,7 @@ public sealed class PayrollImportService : IPayrollImportService {
                 var head=reversed.Groups[2].Value;
                 var required=head.Length==6?2:head.Length==5?3:0;
                 if(required>0) {
-                    var ending=Regex.Match(region,@"(?<!\d)\d{2,3}(?!\d)").Value;
+                    var ending=Regex.Matches(suffix,@"(?<!\d)\d{2,3}(?!\d)").Select(m=>m.Value).FirstOrDefault(x=>x.Length==required) ?? Regex.Matches(region,@"(?:^|\s)(\d{2,3})(?=\s|$)").Select(m=>m.Groups[1].Value).FirstOrDefault(x=>x.Length==required) ?? "";
                     if(ending.Length==required)payment=head+ending+"-"+reversed.Groups[1].Value;
                 }
             }
