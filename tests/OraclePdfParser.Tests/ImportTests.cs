@@ -61,4 +61,11 @@ public sealed class ImportTests {
    Assert.Contains(r.Issues,i=>i.Code=="INCOMPLETE_COVER_GROUPS");
  }
 
+ [Fact] public void RecognizesArabicPayrollMonthAcrossReportTypes(){
+   var report=new PayrollImportService().Import("test.pdf",[
+     "كشف إجماليات المرتب لكل سجل وبنك عن شهر: أكتوبر سنــــة ٢٠٢٦\nالاستحقاقات\nالبنك: بنك مصر الفرع: مركز البطاقات\nجملة الصافى المستحق 100.00\nعدد العاملين: 1"
+   ]);
+   Assert.Equal("2026-10",report.Period);
+ }
+
 }
