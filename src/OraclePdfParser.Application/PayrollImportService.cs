@@ -225,15 +225,18 @@ public sealed class PayrollImportService : IPayrollImportService {
             var n12=Regex.Match(identity,@"(?<!\d)\d{12}(?!\d)");
             var suffixId=Regex.Match(second,@"^\s*(\d{2})\s");
             var national=n12.Success&&suffixId.Success?n12.Value+suffixId.Groups[1].Value:null;
-            // RTL textual order of payment number: rightmost fixed prefix can be split from suffix.
-            var reversed=ReversePay.Match(region);
+            // Only use identifiers in this employee's immediate text, never the preceding employee.
+            var reversed=ReversePay.Match(suffix);
+            if(!reversed.Success)reversed=ReversePay.Match(previous);
+            if(!reversed.Success)reversed=ReversePay.Match(first);
             string? payment=null;
             if(reversed.Success) {
                 var head=reversed.Groups[2].Value;
                 var required=head.Length==6?2:head.Length==5?3:0;
                 if(required>0) {
-                    var ending=Regex.Matches(suffix,@"(?<!\d)\d{2,3}(?!\d)").Select(m=>m.Value).FirstOrDefault(x=>x.Length==required) ?? Regex.Matches(region,@"(?:^|\s)(\d{2,3})(?=\s|$)").Select(m=>m.Groups[1].Value).FirstOrDefault(x=>x.Length==required) ?? "";
-                    if(ending.Length==required)payment=head+ending+"-"+reversed.Groups[1].Value;
+                    var ending=Regex.Matches(suffix,@"(?<!\d)\d{2,3}(?!\d)")
+                        .Select(m=>m.Value).FirstOrDefault(x=>x.Length==required);
+                    if(ending is not null)payment=head+ending+"-"+reversed.Groups[1].Value;
                 }
             }
             var warnings=new List<string>();
