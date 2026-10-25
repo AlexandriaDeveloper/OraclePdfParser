@@ -96,6 +96,14 @@ public sealed class PayrollImportService : IPayrollImportService {
                 else if(Math.Abs(gross.Value + govt.Sum(x=>x.Amount) - deduct.Value - net.Value)>.02m)
                     warnings.Add("Net does not reconcile with gross + government shares - deductions");
             }
+            if(gross is not null){
+                var earningsSum=entries.Where(x=>x.Kind==EntryKind.Earning).Sum(x=>x.Amount);
+                if(Math.Abs(earningsSum-gross.Value)>.02m)warnings.Add("Earning line items do not reconcile with printed gross");
+            }
+            if(deduct is not null){
+                var deductionSum=entries.Where(x=>x.Kind==EntryKind.Deduction).Sum(x=>x.Amount);
+                if(Math.Abs(deductionSum-deduct.Value)>.02m)warnings.Add("Deduction line items do not reconcile with printed deduction total");
+            }
             if(!entries.Any(x=>x.Kind==EntryKind.Earning)) warnings.Add("No detailed earnings could be safely linked");
             if(!entries.Any(x=>x.Kind==EntryKind.Deduction)) warnings.Add("No detailed deductions could be safely linked");
             foreach(var w in warnings)issues.Add(new("PAYSLIP_REVIEW",w,r.Start));
