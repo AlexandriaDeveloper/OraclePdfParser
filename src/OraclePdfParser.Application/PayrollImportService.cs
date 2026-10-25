@@ -128,7 +128,8 @@ public sealed class PayrollImportService : IPayrollImportService {
                 .ToArray();
             if(amounts.Length==0)return;
             // Choose final currency-like token, allowing values embedded before trailing Arabic text.
-            var amountToken=amounts[^1];
+            var amountToken=amounts.LastOrDefault(x=>x.Text.Contains('.') || x.Text.Contains(','));
+            if(amountToken==default)amountToken=amounts[^1];
             if(Arabic.Amount(amountToken.Text) is not {} amount)return;
             var label=raw.Remove(amountToken.Index,amountToken.Length).Trim();
             if(label.Length<3)return;
@@ -166,7 +167,7 @@ public sealed class PayrollImportService : IPayrollImportService {
                     continue;
                 }
                 if(state is EntryKind.Earning or EntryKind.Deduction) {
-                    if(buf.Count>0)buf.Add(line);
+                    if(code is not null || buf.Count>0)buf.Add(line);
                     else if(Has(line,"حكومة")) {code=null;itemPage=page.Number;buf.Add(line);}
                 } else if(Has(line,"حكومة")) {Flush();code=null;itemPage=page.Number;buf.Add(line);}
                 else if(buf.Count>0)buf.Add(line);
