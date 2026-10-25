@@ -43,12 +43,20 @@ public sealed class PayrollImportService : IPayrollImportService {
             sample.Contains("كشف اجماليات المرتب")?ReportKind.Cover:
             sample.Contains("اسم الموظف")&&sample.Contains("الاستحقاقات")?ReportKind.EmployeePayslip:
             ReportKind.Unknown;
-        return kind switch {
+        var report=kind switch {
             ReportKind.EmployeePayslip => Payslips(fileName,clean),
             ReportKind.Cover => Cover(fileName,clean),
             ReportKind.PaymentSheet => Payment(fileName,clean),
             _=>new(Guid.NewGuid(),fileName,kind,VerificationStatus.Rejected,pages.Count,[],[],[new("UNKNOWN_REPORT","Unknown report structure",null,"error")])
         };
+        return report with {Period=FindPeriod(sample)};
+    }
+    private static string? FindPeriod(string text){
+      var months=new[]{"يناير","فبراير","مارس","ابريل","مايو","يونيو","يوليو","اغسطس","سبتمبر","اكتوبر","نوفمبر","ديسمبر"};
+      var m=Regex.Match(text,@"(?:عن\s+)?شهر\s*:\s*([\u0621-\u064a]+).*?سنه\s*:?\s*(\d{4})",RegexOptions.Singleline);
+      if(!m.Success)return null;
+      var index=Array.FindIndex(months,x=>x==K(m.Groups[1].Value));
+      return index<0?null:m.Groups[2].Value+"-"+(index+1).ToString("00",CultureInfo.InvariantCulture);
     }
     private ImportReport Payslips(string file,IReadOnlyList<string> pages) {
         var records=new List<(int Start,List<(int Number,string Text)> Pages)>();
