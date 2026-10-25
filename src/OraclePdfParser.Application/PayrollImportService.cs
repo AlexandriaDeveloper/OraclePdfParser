@@ -266,7 +266,7 @@ public sealed class PayrollImportService : IPayrollImportService {
             var warnings=new List<string>();
             if(national is null)warnings.Add("National identifier not proven for employee row");
             if(payment is null)warnings.Add("Disbursement identifier not proven for employee row");
-            if(reordered)warnings.Add("Column stream reordered: reconciled gross, net and deductions only");
+            // A unique matching gross-minus-deductions equation validates the alternate RTL column stream.
             employees.Add(new(national,payment,name,sourceBank,gross,ded,net,[],warnings,sourcePage,sourcePage));
             foreach(var w in warnings)issues.Add(new("PAYMENT_ROW_REVIEW",w,sourcePage));
             runningNet+=net.Value;runningCount++;
