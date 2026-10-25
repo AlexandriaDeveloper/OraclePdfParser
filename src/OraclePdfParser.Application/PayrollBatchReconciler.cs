@@ -8,6 +8,13 @@ public sealed class PayrollBatchReconciler {
    var cover=reports.FirstOrDefault(r=>r.Kind==ReportKind.Cover);
    var extra=reports.ToDictionary(r=>r.Id,_=>new List<ImportIssue>());
    void Add(ImportReport r,string code,string message)=>extra[r.Id].Add(new(code,message,null,"error"));
+   if(reports.Count>1) {
+      foreach(var dup in reports.GroupBy(r=>r.Kind).Where(g=>g.Count()>1))
+        foreach(var r in dup)Add(r,"DUPLICATE_DOCUMENT_TYPE","More than one file of the same report type; cannot automatically select source");
+      var periods=reports.Where(r=>r.Period is not null).Select(r=>r.Period).Distinct().ToArray();
+      if(periods.Length>1)foreach(var r in reports)Add(r,"PAYROLL_PERIOD_MISMATCH","Uploaded reports belong to different months");
+      if(reports.Any(r=>r.Period is null))foreach(var r in reports.Where(r=>r.Period is null))Add(r,"PAYROLL_PERIOD_UNKNOWN","Cannot confirm report month for reconciliation");
+   }
    if(slips is not null&&sheet is not null) {
       var ids=sheet.Employees.Where(e=>e.NationalId is not null).GroupBy(e=>e.NationalId).ToDictionary(g=>g.Key!,g=>g.ToArray());
       foreach(var e in slips.Employees){
