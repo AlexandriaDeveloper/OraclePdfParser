@@ -182,7 +182,7 @@ public sealed class PayrollImportService : IPayrollImportService {
         var employees=new List<PayrollEmployee>();var groups=new List<CoverGroup>();var issues=new List<ImportIssue>();
         string? bank=null,branch=null;decimal runningNet=0;int runningCount=0,startPage=1;bool hasGroup=false;
         for(int pi=0;pi<pages.Count;pi++) {
-            var t=pages[pi],lines=Arabic.Lines(t);
+            var t=pages[pi];var lines=Arabic.Lines(t);
             var bankMatch=Labeled(t,"البنك","الفرع") ?? Labeled(t,"البنك ","الفرع");
             if(bankMatch is not null) {bank=bankMatch;branch=Field(t,"الفرع");}
             var end=Array.FindIndex(lines,l=>Has(l,"إقرار"));
@@ -239,7 +239,7 @@ public sealed class PayrollImportService : IPayrollImportService {
                 runningNet+=net.Value;runningCount++;hasGroup=true;i=second;
             }
             // A record group may continue onto a subsequent page. Trust only its printed subtotal.
-            foreach(var m in Regex.Matches(t,@"(?m)^\s*إجمالي?\s+السجل\s*\n\s*([\d,.]+)")){
+            foreach(Match m in Regex.Matches(t,@"(?m)^\s*إجمالي?\s+السجل\s*\n\s*([\d,.]+)")){
                 var total=Arabic.Amount(m.Groups[1].Value);
                 var warns=new List<string>();
                 if(total is null) warns.Add("Group net could not be extracted");
