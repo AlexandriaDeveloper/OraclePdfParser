@@ -285,9 +285,9 @@ public sealed class PayrollImportService : IPayrollImportService {
                     if(Currency.Matches(lines[k]).Count==11){secondIndex=k;break;}
                 if(secondIndex>=0) {
                     string identity=secondIndex>index+1?lines[secondIndex-1]:"";
-                    if(ParsePair(first,lines[secondIndex],prevName,identity,region,pi+1,bank))index=secondIndex;
+                    if(ParsePair(first,lines[secondIndex],previous,identity,region,pi+1,bank))index=secondIndex;
                 }else if(pi+1<pages.Count) {
-                    pending=(first,prevName,region,pi+1,bank);
+                    pending=(first,previous,region,pi+1,bank);
                 }
             }
             // Printed bank-group subtotal is the evidence source; never invent it from rows.
