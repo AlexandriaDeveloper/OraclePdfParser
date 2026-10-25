@@ -221,7 +221,7 @@ public sealed class PayrollImportService : IPayrollImportService {
             var tail=Regex.Replace(suffix,@"\d{4,6}-\d{5,6}|\b\d{2,3}\b","").Trim();
             if(tail.Length>1&&Regex.IsMatch(tail,@"[\u0621-\u064a]"))name=(name+" "+tail).Trim();
             name=Regex.Replace(name,@"\s+"," ").Trim();
-            if(name.Length<5||!Regex.IsMatch(name,@"[\u0621-\u064a]"))return false;
+            if(name.Length<5||!Regex.IsMatch(name,@"[\u0621-\u064a]") || Has(name,"اجمالى السجل") || Has(name,"إجمالي السجل"))return false;
             var n12=Regex.Match(identity,@"(?<!\d)\d{12}(?!\d)");
             var suffixId=Regex.Match(second,@"^\s*(\d{2})\s");
             var national=n12.Success&&suffixId.Success?n12.Value+suffixId.Groups[1].Value:null;
@@ -267,6 +267,9 @@ public sealed class PayrollImportService : IPayrollImportService {
             }
             for(int index=section+1;index<end;index++){
                 var first=lines[index];if(Currency.Matches(first).Count!=11)continue;
+                // Reject summary/amount-only lines, even if a nearby heading contains Arabic text.
+                var initialPrefix=first[..Currency.Match(first).Index].Trim();
+                if(!Regex.IsMatch(initialPrefix,@"[\u0621-\u064a]") || Has(initialPrefix,"اجمالى") || Has(initialPrefix,"إجمالي"))continue;
                 var previous=index>section+1?lines[index-1]:"";
                 var before=index>section+2?lines[index-2]:"";
                 var prevName=Regex.IsMatch(previous,@"[\u0621-\u064a]")?previous:
