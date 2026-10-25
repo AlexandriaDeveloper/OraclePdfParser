@@ -38,4 +38,20 @@ public sealed class OracleEdgeCaseTests {
    Assert.Equal(12800m,Assert.Single(r.Groups).TotalNet);
    Assert.DoesNotContain(r.Issues,x=>x.Code=="PAYMENT_GROUP_REVIEW");
  }
+ [Fact]
+ public void AmountsBeforeNameAndStandalonePaymentPrefixAreResolvedByContent(){
+   var first=string.Join(" ",new[]{"12800.00","16000.00","0.00","0.00","0.00","0.00","0.00","0.00","0.00","0.00","0.00"});
+   var second=string.Join(" ",new[]{"3200.00","0.00","0.00","0.00","0.00","0.00","0.00","0.00","0.00","0.00","0.00"});
+   var doc="كشف صرف المرتبات\nالاستقطاعات\n1\n8867-000000\n05\nموظف تجريبي محمد كامل\n"+first+
+      " الشريف\n000000000000\n17 "+second+"\nإجمالى السجل\n12800.00\nإقرار";
+   var imported=new PayrollImportService().Import("names.pdf",[doc]);
+   var employee=Assert.Single(imported.Employees);
+   Assert.Equal("موظف تجريبي محمد كامل الشريف",employee.Name);
+   Assert.Equal("00000005-8867",employee.DisbursementNumber);
+   Assert.Equal("00000000000017",employee.NationalId);
+   Assert.Equal(16000m,employee.Gross);
+   Assert.Equal(12800m,employee.Net);
+   Assert.Equal(VerificationStatus.Verified,imported.Status);
+ }
+
 }
