@@ -52,4 +52,13 @@ public sealed class ImportTests {
     Assert.All(result,r=>Assert.Equal(VerificationStatus.ReviewRequired,r.Status));
     Assert.Contains(result[0].Issues,i=>i.Code=="GROUP_NET");
  }
+ [Fact] public void IncompleteCoverCannotBeMarkedVerified(){
+   var r=new PayrollImportService().Import("cover.pdf",[
+     "وزارة المالية\nكشف إجماليات المرتب لكل سجل وبنك عن شهر أكتوبر 2026\nالاستحقاقات\nالبنك : بنك مصر الفرع: مركز البطاقات\nجملة الصافى المستحق 100.00\nعدد العاملين: 1",
+     "الاستحقاقات\nالبنك : بنك مصر الفرع: مركز البطاقات\nاستقطاعات بدون نهاية المجموعة"
+   ]);
+   Assert.Equal(VerificationStatus.ReviewRequired,r.Status);
+   Assert.Contains(r.Issues,i=>i.Code=="INCOMPLETE_COVER_GROUPS");
+ }
+
 }
