@@ -1,12 +1,25 @@
 # OraclePdfParser
 
-An Arabic RTL Oracle payroll PDF importer built with **ASP.NET Core 8**, **Angular 18** and separated **Domain / Application / Infrastructure / API** layers.
+An Arabic RTL Oracle payroll PDF importer built with **ASP.NET Core 10**, **Angular 18** and separated **Domain / Application / Infrastructure / API** layers.
 
 The parser uses PDFium's Unicode text stream, **not fixed page coordinates**, OCR or fixed employee/page counts. It treats unproven values as review items instead of fabricating links between names and amounts.
 
+## .NET 10 migration
+
+This repository now targets **net10.0** for the API, domain, application, infrastructure, verification tool and tests. Angular stays on its existing version. `Microsoft.Data.Sqlite` is upgraded to the 10.0.x stable line. `global.json` selects the .NET 10 SDK with feature-band roll-forward.
+
+For Windows development, verify that `dotnet --list-sdks` includes a **10.0.x** SDK and that `dotnet --list-runtimes` lists **Microsoft.AspNetCore.App 10.0.x**. Runtime alone is enough for an already built EXE, but building requires the SDK.
+
+After pulling `main`, rebuild and launch the **net10.0** output. Any old executable under `bin\\Debug\\net8.0` is obsolete and will still require .NET 8 if launched directly. In PowerShell from the repository root:
+
+```powershell
+dotnet restore .\\src\\OraclePdfParser.Api\\OraclePdfParser.Api.csproj
+dotnet run --project .\\src\\OraclePdfParser.Api\\OraclePdfParser.Api.csproj --urls http://localhost:5080
+```
+
 ## Quick start
 
-Prerequisites: .NET 8 SDK, Node.js 22 and npm.
+Prerequisites: .NET 10 SDK, Node.js 22 and npm.
 
 ```bash
 dotnet run --project src/OraclePdfParser.Api --urls http://localhost:5080
