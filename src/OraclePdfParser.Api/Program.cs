@@ -2,7 +2,7 @@ using OraclePdfParser.Application;
 using OraclePdfParser.Infrastructure;
 var builder=WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton<IPayrollImportService,PayrollImportService>();
-builder.Services.AddSingleton<IPdfTextSource,PdfPigTextSource>();
+builder.Services.AddSingleton<IPdfTextSource,PdfiumTextSource>();
 builder.Services.AddSingleton<PayrollBatchReconciler>();
 builder.Services.AddCors(o=>o.AddPolicy("LocalAngular",p=>p.WithOrigins("http://localhost:4200").AllowAnyHeader().AllowAnyMethod()));
 builder.WebHost.ConfigureKestrel(o=>o.Limits.MaxRequestBodySize=30*1024*1024);
