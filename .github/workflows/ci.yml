@@ -1,0 +1,28 @@
+name: Build and test
+on:
+  push:
+    branches: [main, 'feat/**']
+  pull_request:
+jobs:
+  dotnet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - run: dotnet test tests/OraclePdfParser.Tests/OraclePdfParser.Tests.csproj --configuration Release
+      - run: dotnet build src/OraclePdfParser.Api/OraclePdfParser.Api.csproj --configuration Release
+      - run: dotnet build tools/OraclePdfParser.Verify/OraclePdfParser.Verify.csproj --configuration Release
+  angular:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --no-audit --no-fund
+      - run: npm run build
