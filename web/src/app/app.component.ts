@@ -8,6 +8,7 @@ interface Result {fileName:string;kind:string;status:string;pages:number;employe
 <section class="hero"><div><h1>مراجعة كشوف الرواتب بدقة</h1><p>ارفع صرفية موظف أو كافر أو كشوف صرف. لن يتم اعتماد بيانات غير مؤكدة تلقائيًا.</p></div>
 <label class="upload">اختر ملفات PDF<input aria-label="اختر ملفات PDF" type="file" accept=".pdf,application/pdf" multiple (change)="select($event)"></label><button (click)="upload()" [disabled]="busy||files.length===0">{{busy?'جارٍ التحليل...':'تحليل الملفات'}}</button><p class="small">{{files.length}} ملف محدد (الحد الأقصى 3)</p></section>
 <p *ngIf="error" class="error" role="alert">{{error}}</p>
+<div *ngIf="results.length" class="actions"><button (click)="exportEmployees()">تصدير الموظفين CSV</button><button (click)="exportItems()">تصدير البنود CSV</button><button (click)="exportJson()">حفظ التقرير JSON</button></div>
 <section *ngFor="let report of results" class="panel"><div class="panelhead"><h2>{{report.fileName}}</h2><span class="tag">{{report.kind}} • {{report.status}}</span></div>
 <div class="stats"><div><small>الصفحات</small><b>{{report.pages}}</b></div><div><small>الموظفون المستخرجون</small><b>{{report.employees.length}}</b></div><div><small>تحذيرات</small><b>{{report.issues.length}}</b></div></div>
 <div *ngIf="report.issues.length" class="warning"><h3>تحتاج مراجعة</h3><p *ngFor="let issue of report.issues.slice(0,30)">{{issue.code}}: {{issue.message}} <span *ngIf="issue.page">— صفحة {{issue.page}}</span></p><p *ngIf="report.issues.length>30">و{{report.issues.length-30}} تحذير إضافي</p></div>
@@ -18,5 +19,30 @@ interface Result {fileName:string;kind:string;status:string;pages:number;employe
 export class AppComponent {private http=inject(HttpClient);files:File[]=[];busy=false;error='';results:Result[]=[];search='';selected:Employee|null=null;
  select(e:Event){this.files=Array.from((e.target as HTMLInputElement).files||[]).slice(0,3);this.error=''}
  upload(){if(!this.files.length)return;this.busy=true;this.error='';const form=new FormData();this.files.forEach(f=>form.append('files',f));this.http.post<Result[]>('/api/import',form).subscribe({next:r=>{this.results=r;this.busy=false},error:e=>{this.error=e.error?.error||'تعذر تحليل الملف';this.busy=false}})}
+
+ private save(name:string,text:string,type:string){
+   const blob=new Blob([text],{type});const url=URL.createObjectURL(blob);
+   const a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();
+   URL.revokeObjectURL(url);
+ }
+ private cell(value:unknown):string{
+   let s=String(value??'');
+   if(/^[=+\-@\t\r]/.test(s))s="'"+s;
+   return '"'+s.replace(/"/g,'""')+'"';
+ }
+ private csv(name:string,rows:unknown[][]){
+   this.save(name,'\uFEFF'+rows.map(r=>r.map(v=>this.cell(v)).join(',')).join('\r\n'),'text/csv;charset=utf-8');
+ }
+ exportEmployees(){
+   const rows:unknown[][]=[['الملف','نوع التقرير','الاسم','الرقم القومي','رقم الصرف','البنك','الاستحقاقات','الاستقطاعات','الصافي','صفحة البداية','صفحة النهاية','حالة المراجعة']];
+   for(const r of this.results)for(const e of r.employees)rows.push([r.fileName,r.kind,e.name,e.nationalId,e.disbursementNumber,e.bank,e.gross,e.deductions,e.net,e.startPage,e.endPage,e.warnings.join(' | ')]);
+   this.csv('oracle-employees.csv',rows);
+ }
+ exportItems(){
+   const rows:unknown[][]=[['الملف','الرقم القومي','الاسم','رمز الحساب','اسم البند','نوع البند','القيمة','الصفحة','النص الأصلي']];
+   for(const r of this.results)for(const e of r.employees)for(const x of e.entries)rows.push([r.fileName,e.nationalId,e.name,x.accountCode,x.label,x.kind,x.amount,x.page,x.rawText]);
+   this.csv('oracle-payroll-items.csv',rows);
+ }
+ exportJson(){this.save('oracle-import-review.json',JSON.stringify(this.results,null,2),'application/json;charset=utf-8')}
  matches(e:Employee){const s=this.search.trim();return !s||[e.name,e.nationalId,e.disbursementNumber].some(x=>x?.includes(s))}
 }
