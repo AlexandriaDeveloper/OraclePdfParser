@@ -1,133 +1,267 @@
+using System.Globalization;
 using System.Text.RegularExpressions;
 using OraclePdfParser.Domain;
 namespace OraclePdfParser.Application;
 
-/// <summary>Content-based, fail-closed parser. No X/Y coordinates, fixed page indices, or positional columns.</summary>
+/// <summary>
+/// Semantic PDF text-stream parser. Never uses X/Y positions, fixed page numbers,
+/// or a predetermined number of employees. Incomplete/ambiguous records fail closed.
+/// </summary>
 public sealed class PayrollImportService : IPayrollImportService {
-    private static readonly Regex NationalId = new(@"(?<!\d)\d{14}(?!\d)", RegexOptions.Compiled);
-    private static readonly Regex PaymentId = new(@"(?<!\d)\d{5,10}-\d{4,8}(?!\d)", RegexOptions.Compiled);
-    private static readonly Regex AccountCode = new(@"(?<!\d)(?:211|411)\d{5}(?!\d)", RegexOptions.Compiled);
-    private static readonly Regex Money = new(@"(?<!\d)\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?(?!\d)|(?<!\d)\d+(?:\.\d{1,2})?(?!\d)",RegexOptions.Compiled);
-    public ImportReport Import(string fileName, IReadOnlyList<string> pages) {
-        var normalized=pages.Select(Arabic.Normalize).ToArray();
-        var joined=string.Join("\n", normalized.Select(x => x[..Math.Min(x.Length,1500)]));
-        var key=Arabic.Key(joined);
-        var kind=key.Contains("كشف صرف المرتبات")?ReportKind.PaymentSheet:
-            key.Contains("كشف اجماليات المرتب")?ReportKind.Cover:
-            key.Contains("اسم الموظف")&&key.Contains("الاستحقاقات")?ReportKind.EmployeePayslip:ReportKind.Unknown;
+    private static readonly Regex NationalId = new(@"(?<!\d)\d{14}(?!\d)",RegexOptions.Compiled);
+    private static readonly Regex Account = new(@"(?<!\d)(?:211|411)\d{5}(?!\d)",RegexOptions.Compiled);
+    private static readonly Regex Money = new(@"(?<!\d)\d+(?:,\d{3})*(?:\.\d{1,2})?(?!\d)",RegexOptions.Compiled);
+    private static readonly Regex Currency = new(@"(?<!\d)\d+(?:,\d{3})*\.\d{2}(?!\d)",RegexOptions.Compiled);
+    private static readonly Regex ReversePay = new(@"(?<!\d)(\d{4,6})-(\d{5,6})(?!\d)",RegexOptions.Compiled);
+    private static readonly Regex Pay = new(@"(?<!\d)\d{7,9}-\d{4,6}(?!\d)",RegexOptions.Compiled);
+    private static readonly StringComparison Ignore=StringComparison.OrdinalIgnoreCase;
+    private static string K(string? s)=>Arabic.Key(s);
+    private static bool Has(string? t,string token)=>K(t).Contains(K(token),Ignore);
+    private static bool GrossLine(string l)=>Has(l,"اجمالي الاستحقاقات") || Has(l,"أجمالى الاستحقاقات");
+    private static bool DeductionLine(string l)=>Has(l,"اجمالي الاستقطاعات") || Has(l,"الأجمالى الاستقطاعات");
+    private static bool NetLine(string l)=>Has(l,"الصافي:") || Has(l,"الصافى:");
+    private static decimal? LastAmount(string l){
+        var tokens=Currency.Matches(l).Select(m=>m.Value).ToArray();
+        // Allow integer totals but ignore solitary year in a heading.
+        if(tokens.Length==0) tokens=Money.Matches(l).Select(m=>m.Value).ToArray();
+        return tokens.Length==0?null:Arabic.Amount(tokens[^1]);
+    }
+    private static string? Labeled(string text,string begin,string end) {
+        var m=Regex.Match(text,Regex.Escape(begin)+@"\s*:\s*(.*?)\s*"+Regex.Escape(end),RegexOptions.Singleline);
+        if(!m.Success)return null;
+        var v=Regex.Replace(m.Groups[1].Value,@"\s+"," ").Trim(' ',':');
+        return v.Length is >0 and <130?v:null;
+    }
+    private static string? Field(string text,string label) {
+        var m=Regex.Match(text,Regex.Escape(label)+@"\s*:\s*([^\n]+)");
+        return m.Success?m.Groups[1].Value.Trim():null;
+    }
+    public ImportReport Import(string fileName,IReadOnlyList<string> pages) {
+        var clean=pages.Select(Arabic.Normalize).ToArray();
+        var sample=K(string.Join("\n",clean.Take(4)));
+        var kind=sample.Contains("كشف صرف المرتبات")?ReportKind.PaymentSheet:
+            sample.Contains("كشف اجماليات المرتب")?ReportKind.Cover:
+            sample.Contains("اسم الموظف")&&sample.Contains("الاستحقاقات")?ReportKind.EmployeePayslip:
+            ReportKind.Unknown;
         return kind switch {
-            ReportKind.EmployeePayslip=>ParsePayslips(fileName,normalized),
-            ReportKind.Cover=>ParseCover(fileName,normalized),
-            ReportKind.PaymentSheet=>ParsePayments(fileName,normalized),
-            _=>new ImportReport(Guid.NewGuid(),fileName,kind,VerificationStatus.Rejected,pages.Count,[],[],[new("UNKNOWN_REPORT","Unrecognized Oracle report; no data was approved.",null,"error")])
+            ReportKind.EmployeePayslip => Payslips(fileName,clean),
+            ReportKind.Cover => Cover(fileName,clean),
+            ReportKind.PaymentSheet => Payment(fileName,clean),
+            _=>new(Guid.NewGuid(),fileName,kind,VerificationStatus.Rejected,pages.Count,[],[],[new("UNKNOWN_REPORT","Unknown report structure",null,"error")])
         };
     }
-    private static bool Has(string text,string phrase)=>Arabic.Key(text).Contains(Arabic.Key(phrase));
-    private static decimal? ValueAfter(string text,string marker) {
-        foreach(var line in Arabic.Lines(text)) {
-            if(!Has(line,marker))continue;
-            var m=Regex.Match(Arabic.Normalize(line),@"(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?\s*$");
-            if(m.Success) return Arabic.Amount(m.Value.Trim());
+    private ImportReport Payslips(string file,IReadOnlyList<string> pages) {
+        var records=new List<(int Start,List<(int Number,string Text)> Pages)>();
+        for(int i=0;i<pages.Count;i++) {
+            if(Has(pages[i],"اسم الموظف")&&NationalId.IsMatch(pages[i]))
+                records.Add((i+1,new()));
+            if(records.Count>0) records[^1].Pages.Add((i+1,pages[i]));
         }
-        return null;
-    }
-    private ImportReport ParsePayslips(string file,IReadOnlyList<string> pages) {
-        var groups=new List<(int start,List<string> text)>();
-        for(var i=0;i<pages.Count;i++) {
-            var p=pages[i]; var isStart=Has(p,"اسم الموظف") && NationalId.IsMatch(p);
-            if(isStart) groups.Add((i+1,new List<string>()));
-            if(groups.Count>0) groups[^1].text.Add(p);
-        }
-        var employees=new List<PayrollEmployee>(); var issues=new List<ImportIssue>();
-        if(groups.Count==0) issues.Add(new("NO_EMPLOYEES","No employee headers could be identified.",null,"error"));
-        foreach(var g in groups) {
-            var t=string.Join("\n",g.text); var lines=Arabic.Lines(t); var id=NationalId.Match(t).Value;
-            var pay=PaymentId.Match(t).Value;
-            var name=ExtractBetween(t,"اسم الموظف", "رقم الصرف");
-            if(string.IsNullOrWhiteSpace(name)) {
-                var start=Array.FindIndex(lines,l=>Has(l,"اسم الموظف")); 
-                if(start>=0) name=Regex.Replace(lines[start],@"^.*?اسم الموظف\s*:?\s*","").Trim();
-            }
-            var gross=ValueAfter(t,"اجمالي الاستحقاقات")??ValueAfter(t,"أجمالي الاستحقاقات");
-            var deductions=ValueAfter(t,"اجمالي الاستقطاعات")??ValueAfter(t,"الأجمالى الاستقطاعات");
-            var net=ValueAfter(t,"الصافي")??ValueAfter(t,"الصافى");
-            var bank=ExtractBetween(t,"البنك","الفرع");
+        var employees=new List<PayrollEmployee>();var issues=new List<ImportIssue>();
+        if(records.Count==0)issues.Add(new("NO_EMPLOYEE_HEADERS","No employee headers were found",null,"error"));
+        foreach(var r in records){
+            var all=string.Join("\n",r.Pages.Select(p=>p.Text));var header=r.Pages[0].Text;
+            var id=NationalId.Match(header).Value;
+            var pay=Pay.Match(header).Value;
+            var name=Labeled(header,"اسم الموظف","رقم الصرف") ?? Field(header,"اسم الموظف") ?? "";
+            // PDF text streams can interleave digits and labels: isolate the name before payment marker.
+            name=Regex.Replace(name,@"\s+"," ").Trim();
+            var bank=Labeled(header,"البنك","الفرع");
             var warnings=new List<string>();
-            if(id.Length!=14)warnings.Add("Missing national ID");
-            if(string.IsNullOrWhiteSpace(name))warnings.Add("Missing employee name");
-            if(net is null)warnings.Add("Missing net payment");
-            // Gross/deduction totals can include non-cash government items: no unsafe accounting inference.
-            if(gross is null || deductions is null)warnings.Add("Missing reported gross or deductions");
-            var entries=ParseEntries(lines,g.start,warnings);
-            if(entries.Count==0)warnings.Add("No reliably associated financial detail entries");
-            var end=g.start+g.text.Count-1;
-            employees.Add(new(id.Length==14?id:null,string.IsNullOrEmpty(pay)?null:pay,name??"",bank,gross,deductions,net,entries,warnings,g.start,end));
-            foreach(var w in warnings)issues.Add(new("EMPLOYEE_REVIEW",$"Employee {id}: {w}",g.start));
+            if(id.Length!=14)warnings.Add("Missing 14-digit national ID");
+            if(pay.Length==0)warnings.Add("Missing payment identifier");
+            if(name.Length<5 || name.Any(char.IsDigit)) warnings.Add("Ambiguous employee name");
+            var entries=ExtractEntries(r.Pages,warnings);
+            decimal? gross=null,deduct=null,net=null;
+            foreach(var line in Arabic.Lines(all)){
+                if(GrossLine(line))gross=LastAmount(line);
+                if(DeductionLine(line))deduct=LastAmount(line);
+                if(NetLine(line))net=LastAmount(line);
+            }
+            if(gross is null || deduct is null || net is null)
+                warnings.Add("Missing official payslip gross, deductions or net");
+            else {
+                // Oracle employer insurance is included in deductions but not in payslip cash gross.
+                // Only reconcile when every employer contribution has been safely extracted.
+                var govt=entries.Where(x=>x.Kind==EntryKind.Informational && Has(x.Label,"حكومة")).ToList();
+                if(govt.Count<4)warnings.Add("Employer contributions incomplete; cannot verify net equation");
+                else if(Math.Abs(gross.Value + govt.Sum(x=>x.Amount) - deduct.Value - net.Value)>.02m)
+                    warnings.Add("Net does not reconcile with gross + government shares - deductions");
+            }
+            if(!entries.Any(x=>x.Kind==EntryKind.Earning)) warnings.Add("No detailed earnings could be safely linked");
+            if(!entries.Any(x=>x.Kind==EntryKind.Deduction)) warnings.Add("No detailed deductions could be safely linked");
+            foreach(var w in warnings)issues.Add(new("PAYSLIP_REVIEW",w,r.Start));
+            employees.Add(new(id.Length==14?id:null,pay.Length>0?pay:null,name,bank,gross,deduct,net,entries,warnings,r.Start,r.Pages[^1].Number));
         }
-        return new(Guid.NewGuid(),file,ReportKind.EmployeePayslip,issues.Count>0?VerificationStatus.ReviewRequired:VerificationStatus.Verified,pages.Count,employees,[],issues);
+        var dupe=employees.Where(e=>e.NationalId is not null).GroupBy(e=>e.NationalId).Where(g=>g.Count()>1);
+        foreach(var g in dupe)issues.Add(new("DUPLICATE_EMPLOYEE",$"Duplicate national ID ({g.Count()} records)",null,"error"));
+        return Report(file,ReportKind.EmployeePayslip,pages.Count,employees,[],issues);
     }
-    private static string? ExtractBetween(string text,string begin,string end) {
-        // Only use labeled textual boundaries; mixed bidi streams may not preserve them.
-        var m=Regex.Match(Arabic.Normalize(text),Regex.Escape(begin)+@"\s*:?\s*(.*?)\s*"+Regex.Escape(end),RegexOptions.Singleline);
-        if(!m.Success)return null;
-        var candidate=Regex.Replace(m.Groups[1].Value,@"\s+"," ").Trim(' ',':');
-        return candidate.Length is >0 and <160 ?candidate:null;
-    }
-    private static List<PayrollEntry> ParseEntries(string[] lines,int startPage,List<string> warnings) {
-        var result=new List<PayrollEntry>();
-        var section=EntryKind.Informational;
-        var buffer=new List<string>();string? code=null;
-        void Flush(){
-            if(buffer.Count==0)return;
-            var raw=string.Join(" ",buffer);
-            // Never infer amounts from a multi-number line (years, percentages, account numbers).
-            var numberLines=buffer.SelectMany(x=>Regex.Matches(x,@"(?<!\d)\d+(?:,\d{3})*(?:\.\d{1,2})?(?!\d)").Select(m=>m.Value)).ToList();
-            if(section is EntryKind.Earning or EntryKind.Deduction && numberLines.Count==1 && Arabic.Amount(numberLines[0]) is {} amount) {
-                var label=Regex.Replace(raw,@"(?<!\d)\d+(?:,\d{3})*(?:\.\d{1,2})?(?!\d)","").Trim();
-                if(!string.IsNullOrWhiteSpace(label))result.Add(new PayrollEntry(code,label,amount,section,startPage,raw));
-            } else if(section is EntryKind.Earning or EntryKind.Deduction) warnings.Add("Ambiguous item: "+raw[..Math.Min(80,raw.Length)]);
-            buffer.Clear();
+    private static List<PayrollEntry> ExtractEntries(List<(int Number,string Text)> pages,List<string> warnings) {
+        var entries=new List<PayrollEntry>();
+        var state=EntryKind.Informational;string? code=null;var buf=new List<string>();int itemPage=pages[0].Number;
+        static bool IgnoreLine(string l)=>l.Length==0 || (Has(l,"الاسم") && Has(l,"القيمة")) ||
+            Has(l,"نظام أوراكل") || Has(l,"المرتب عن شهر") || Has(l,"هذا البيان للمراجعة") || Has(l,"كشف رواتب");
+        void Flush() {
+            if(buf.Count==0)return;
+            var raw=string.Join(" ",buf);buf.Clear();
+            if(raw.TrimStart().StartsWith("x ",Ignore)||raw.TrimStart().StartsWith("× ",Ignore))return;
+            var amounts=Money.Matches(raw).Select(m=>(Text:m.Value,Index:m.Index,Length:m.Length))
+                .Where(x=>!Regex.IsMatch(x.Text,@"^(?:19|20)\d{2}$"))
+                .Where(x=>!Regex.IsMatch(raw.Substring(Math.Min(raw.Length,x.Index+x.Length)).TrimStart(),@"^%"))
+                .ToArray();
+            if(amounts.Length==0)return;
+            // Choose final currency-like token, allowing values embedded before trailing Arabic text.
+            var amountToken=amounts[^1];
+            if(Arabic.Amount(amountToken.Text) is not {} amount)return;
+            var label=raw.Remove(amountToken.Index,amountToken.Length).Trim();
+            if(label.Length<3)return;
+            if(Has(label,"اجمالي") || Has(label,"الأجمالى") || Has(label,"الصافي"))return;
+            if(code is null && !(state==EntryKind.Informational && Has(label,"حكومة"))) {
+                warnings.Add("Unanchored item: "+raw[..Math.Min(raw.Length,70)]);
+                return;
+            }
+            entries.Add(new PayrollEntry(code,label,amount,state,itemPage,raw));
         }
-        foreach(var line in lines) {
-            if(Has(line,"الاستحقاقات") && !Has(line,"اجمالي")&&!Has(line,"اجمالى")) { Flush();section=EntryKind.Earning;continue; }
-            if(Has(line,"الاستقطاعات") && !Has(line,"اجمالي")&&!Has(line,"اجمالى")) { Flush();section=EntryKind.Deduction;continue; }
-            if(Has(line,"الصافي")||Has(line,"الصافى")) {Flush();section=EntryKind.Informational;continue;}
-            if(section==EntryKind.Informational)continue;
-            if(Has(line,"الاسم")&&Has(line,"القيمة"))continue;
-            if(Has(line,"اجمالي")||Has(line,"اجمالى")||Has(line,"الأجمالى")){Flush();continue;}
-            var c=AccountCode.Match(line);
-            if(c.Success){Flush();code=c.Value; var remainder=line.Replace(c.Value,"").Trim(); if(remainder.Length>0)buffer.Add(remainder);continue;}
-            if(Regex.IsMatch(line,@"^\s*x\s",RegexOptions.IgnoreCase)){Flush();code=null;continue;}
-            if(!string.IsNullOrWhiteSpace(line))buffer.Add(line);
+        foreach(var page in pages) {
+            foreach(var original in Arabic.Lines(page.Text)) {
+                var line=original.Trim();
+                if(GrossLine(line)) {Flush();state=EntryKind.Informational;code=null;continue;}
+                if(DeductionLine(line)) {Flush();state=EntryKind.Informational;code=null;continue;}
+                if(NetLine(line)) {Flush();state=EntryKind.Informational;code=null;continue;}
+                if(Has(line,"الاستحقاقات") && !Has(line,"اجمالى") && !Has(line,"اجمالي")){Flush();state=EntryKind.Earning;code=null;continue;}
+                if(Has(line,"الاستقطاعات") && !Has(line,"اجمالى") && !Has(line,"اجمالي")){Flush();state=EntryKind.Deduction;code=null;continue;}
+                if(IgnoreLine(line))continue;
+                if(line.TrimStart().StartsWith("x ",Ignore)){Flush();code=null;continue;}
+                var match=Account.Match(line);
+                if(match.Success) {
+                    var prefix=line[..match.Index].Trim();
+                    var suffix=line[(match.Index+match.Length)..].Trim();
+                    bool atEnd=suffix.Length==0 && prefix.Length>0;
+                    if(atEnd) {
+                        // Deduction rows commonly end with their account code.
+                        if(buf.Count>0)Flush();
+                        code=match.Value;itemPage=page.Number;
+                        buf.Add(prefix);Flush();code=null;
+                    }else {
+                        Flush();code=match.Value;itemPage=page.Number;
+                        if(suffix.Length>0)buf.Add(suffix);
+                    }
+                    continue;
+                }
+                if(state is EntryKind.Earning or EntryKind.Deduction) {
+                    if(buf.Count>0)buf.Add(line);
+                    else if(Has(line,"حكومة")) {code=null;itemPage=page.Number;buf.Add(line);}
+                } else if(Has(line,"حكومة")) {Flush();code=null;itemPage=page.Number;buf.Add(line);}
+                else if(buf.Count>0)buf.Add(line);
+            }
         }
-        Flush();
-        return result;
+        Flush();return entries;
     }
-    private ImportReport ParseCover(string file,IReadOnlyList<string> pages) {
+    private ImportReport Cover(string file,IReadOnlyList<string> pages) {
         var groups=new List<CoverGroup>();var issues=new List<ImportIssue>();
         string? bank=null,branch=null;int start=1;
-        for(var i=0;i<pages.Count;i++) {
-            var text=pages[i];
-            var b=ExtractBetween(text,"البنك","الفرع");
-            if(!string.IsNullOrWhiteSpace(b)) {bank=b;start=i+1;}
-            var f=Regex.Match(text,@"الفرع\s*:\s*([^\r\n]+)");
-            if(f.Success)branch=f.Groups[1].Value.Trim();
-            if(!Has(text,"جملة الصافي المستحق"))continue;
-            var net=ValueAfter(text,"جملة الصافي المستحق");
-            var count=Regex.Match(text,@"عدد العاملين\s*:\s*(\d+)");
-            var n=count.Success?int.Parse(count.Groups[1].Value): (int?)null;
-            var warn=new List<string>();
-            if(net is null)warn.Add("Could not reliably read cover net");
-            if(n is null)warn.Add("Could not reliably read employee count");
-            groups.Add(new(bank,branch,n,net,start,warn));
-            foreach(var w in warn)issues.Add(new("COVER_REVIEW",w,i+1));
+        for(int i=0;i<pages.Count;i++) {
+            var t=pages[i];var b=Labeled(t,"البنك","الفرع") ?? Labeled(t,"البنك ","الفرع");
+            if(b is not null){bank=b;start=i+1;}
+            var f=Field(t,"الفرع");if(f is not null) branch=f;
+            var m=Regex.Match(t,@"جملة\s+الصاف[ىي]\s+المستحق\s+([\d,.]+)");
+            if(!m.Success)continue;
+            var net=Arabic.Amount(m.Groups[1].Value);
+            var n=Regex.Match(t,@"عدد\s+العاملين\s*:\s*(\d+)");
+            int? count=n.Success && int.TryParse(n.Groups[1].Value,out var x)?x:null;
+            var warns=new List<string>();
+            if(net is null||count is null)warns.Add("Unverified bank group total or employee count");
+            groups.Add(new(bank,branch,count,net,start,warns));
+            foreach(var w in warns)issues.Add(new("COVER_REVIEW",w,i+1));
         }
-        if(groups.Count==0)issues.Add(new("NO_COVER_GROUPS","No recognizable cover totals",null,"error"));
-        return new(Guid.NewGuid(),file,ReportKind.Cover,VerificationStatus.ReviewRequired,pages.Count,[],groups,issues);
+        if(groups.Count==0)issues.Add(new("NO_COVER_GROUPS","No recognized group totals",null,"error"));
+        return Report(file,ReportKind.Cover,pages.Count,[],groups,issues);
     }
-    private ImportReport ParsePayments(string file,IReadOnlyList<string> pages) {
-        // Multi-column payment sheets require independent layout validation. Never guess identities from flattened lines.
-        var issues=new List<ImportIssue>{new("PAYMENT_LAYOUT_REVIEW","Payment sheet detected. Individual multi-column amounts cannot safely be assigned using plain text order; manual review required.",null)};
-        return new(Guid.NewGuid(),file,ReportKind.PaymentSheet,VerificationStatus.ReviewRequired,pages.Count,[],[],issues);
+    private ImportReport Payment(string file,IReadOnlyList<string> pages) {
+        var employees=new List<PayrollEmployee>();var groups=new List<CoverGroup>();var issues=new List<ImportIssue>();
+        string? bank=null,branch=null;decimal runningNet=0;int runningCount=0,startPage=1;bool hasGroup=false;
+        for(int pi=0;pi<pages.Count;pi++) {
+            var t=pages[pi],lines=Arabic.Lines(t);
+            var bankMatch=Labeled(t,"البنك","الفرع") ?? Labeled(t,"البنك ","الفرع");
+            if(bankMatch is not null) {bank=bankMatch;branch=Field(t,"الفرع");}
+            var end=Array.FindIndex(lines,l=>Has(l,"إقرار"));
+            if(end<0)end=lines.Length;
+            var section=Array.FindLastIndex(lines,0,end,l=>Has(l,"الاستقطاعات"));
+            if(section<0)section=0;
+            for(var i=section+1;i<end;i++) {
+                var row=lines[i];var cash=Currency.Matches(row).Select(m=>m.Value).ToList();
+                if(cash.Count!=11)continue;
+                // Aggregate rows and continuation pages don't carry an employee marker.
+                var heading=string.Join(" ",lines.Skip(Math.Max(section,i-3)).Take(Math.Min(3,i-section)));
+                if(Has(heading,"اجمالي السجل")||Has(heading,"إجمالى السجل")) continue;
+                int second=-1;
+                for(var j=i+1;j<=Math.Min(i+3,end-1);j++)
+                    if(Currency.Matches(lines[j]).Count==11){second=j;break;}
+                if(second<0)continue;
+                var b=Currency.Matches(lines[second]).Select(m=>m.Value).ToArray();
+                var gross=Arabic.Amount(cash[9]);var net=Arabic.Amount(cash[10]);var deduction=Arabic.Amount(b[0]);
+                if(gross is null || net is null || deduction is null || Math.Abs(gross.Value-net.Value-deduction.Value)>.02m)continue;
+                // Only treat a numeric pair as an employee if the nearby text identifies a person.
+                var firstMoney=Currency.Match(row);
+                var prefix=row[..firstMoney.Index].Trim();
+                var suffix=row[(Currency.Matches(row)[^1].Index+Currency.Matches(row)[^1].Length)..].Trim();
+                var prev=i>0?lines[i-1]:"";
+                var name=prefix.Length>2 && Regex.IsMatch(prefix,@"[\u0621-\u064a]")?prefix:
+                    Regex.IsMatch(prev,@"[\u0621-\u064a]")?prev:"";
+                if(name.Length<5)continue;
+                // Continuation word may appear after the final numeric value.
+                var tail=Regex.Replace(suffix,@"\d{4,6}-\d{5,6}|\b\d{2,3}\b","").Trim();
+                if(tail.Length>1 && Regex.IsMatch(tail,@"[\u0621-\u064a]")) name=(name+" "+tail).Trim();
+                var near=string.Join(" ",lines.Skip(Math.Max(section,i-3)).Take(Math.Min(end,second+1)-Math.Max(section,i-3)));
+                var reverse=ReversePay.Match(near);
+                // Reverse code is unambiguous only when its missing suffix is actually present.
+                string? payId=null;
+                if(reverse.Success){
+                    var candidate=reverse.Groups[2].Value;string? suffixDigits=null;
+                    if(candidate.Length==6) suffixDigits=Regex.Match(suffix,@"\b\d{2}\b").Value;
+                    else suffixDigits=Regex.Match(suffix,@"\b\d{3}\b").Value;
+                    if(suffixDigits.Length>0)payId=candidate+suffixDigits+"-"+reverse.Groups[1].Value;
+                }
+                string? nid=null;
+                // The 14-digit Egyptian ID is split into a 12-digit line and 2-digit prefix.
+                if(second>i+1){
+                    var part=Regex.Match(lines[second-1],@"(?<!\d)\d{12}(?!\d)");
+                    var part2=Regex.Match(lines[second],@"^\s*(\d{2})\s");
+                    if(part.Success&&part2.Success)nid=part.Value+part2.Groups[1].Value;
+                }
+                var warn=new List<string>();
+                if(nid is null)warn.Add("Payment row has no proven national ID");
+                if(payId is null)warn.Add("Payment row has no proven payment number");
+                if(gross.Value-net.Value!=deduction.Value) { /* handled within tolerance above */ }
+                employees.Add(new(nid,payId,name,bank,gross,deduction,net,[],warn,pi+1,pi+1));
+                foreach(var w in warn)issues.Add(new("PAYMENT_REVIEW",w,pi+1));
+                runningNet+=net.Value;runningCount++;hasGroup=true;i=second;
+            }
+            // A record group may continue onto a subsequent page. Trust only its printed subtotal.
+            foreach(var m in Regex.Matches(t,@"(?m)^\s*إجمالي?\s+السجل\s*\n\s*([\d,.]+)")){
+                var total=Arabic.Amount(m.Groups[1].Value);
+                var warns=new List<string>();
+                if(total is null) warns.Add("Group net could not be extracted");
+                else if(!hasGroup || Math.Abs(runningNet-total.Value)>.02m)
+                    warns.Add("Employee net sum does not match group reported net");
+                var g=new CoverGroup(bank,branch,runningCount,total,startPage,warns);
+                groups.Add(g);foreach(var w in warns)issues.Add(new("PAYMENT_GROUP_REVIEW",w,pi+1));
+                startPage=pi+2;runningNet=0;runningCount=0;hasGroup=false;
+            }
+        }
+        if(hasGroup)issues.Add(new("INCOMPLETE_PAYMENT_GROUP","Group has employee records but no closing subtotal",pages.Count));
+        if(employees.Count==0)issues.Add(new("NO_PAYMENT_ROWS","No verified employee rows extracted",null,"error"));
+        if(groups.Count==0)issues.Add(new("NO_PAYMENT_GROUPS","No group subtotal identified",null,"error"));
+        foreach(var dup in employees.Where(e=>e.NationalId is not null).GroupBy(e=>e.NationalId).Where(g=>g.Count()>1))
+            issues.Add(new("DUPLICATE_EMPLOYEE","Repeated national ID in payment sheet",null,"error"));
+        return Report(file,ReportKind.PaymentSheet,pages.Count,employees,groups,issues);
+    }
+    private static ImportReport Report(string file,ReportKind kind,int pages,List<PayrollEmployee> employees,List<CoverGroup> groups,List<ImportIssue> issues){
+        // Only mark verified if every expected piece is present and no ambiguity remains.
+        var complete=issues.Count==0&&((kind==ReportKind.EmployeePayslip&&employees.Count>0&&employees.All(e=>e.Gross is not null&&e.Deductions is not null&&e.Net is not null))
+            ||(kind==ReportKind.Cover&&groups.Count>0&&groups.All(g=>g.EmployeeCount is not null&&g.TotalNet is not null))
+            ||(kind==ReportKind.PaymentSheet&&groups.Count>0&&employees.Count>0&&employees.All(e=>e.NationalId is not null&&e.DisbursementNumber is not null)));
+        return new(Guid.NewGuid(),file,kind,complete?VerificationStatus.Verified:VerificationStatus.ReviewRequired,pages,employees,groups,issues);
     }
 }
