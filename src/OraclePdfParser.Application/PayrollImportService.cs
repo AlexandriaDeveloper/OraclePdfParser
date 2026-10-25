@@ -149,7 +149,7 @@ public sealed class PayrollImportService : IPayrollImportService {
                 if(Has(line,"الاستحقاقات") && !Has(line,"اجمالى") && !Has(line,"اجمالي")){Flush();state=EntryKind.Earning;code=null;continue;}
                 if(Has(line,"الاستقطاعات") && !Has(line,"اجمالى") && !Has(line,"اجمالي")){Flush();state=EntryKind.Deduction;code=null;continue;}
                 if(IgnoreLine(line))continue;
-                if(line.TrimStart().StartsWith("x ",Ignore)){Flush();code=null;continue;}
+                if(line.TrimStart().StartsWith("x",Ignore)){Flush();code=null;continue;}
                 var match=Account.Match(line);
                 if(match.Success) {
                     var prefix=line[..match.Index].Trim();
