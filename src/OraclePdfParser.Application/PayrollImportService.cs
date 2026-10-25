@@ -187,7 +187,7 @@ public sealed class PayrollImportService : IPayrollImportService {
             if(bankMatch is not null) {bank=bankMatch;branch=Field(t,"الفرع");}
             var end=Array.FindIndex(lines,l=>Has(l,"إقرار"));
             if(end<0)end=lines.Length;
-            var section=Array.FindLastIndex(lines,0,end,l=>Has(l,"الاستقطاعات"));
+            var section=Array.FindLastIndex(lines,Math.Max(0,end-1),end,l=>Has(l,"الاستقطاعات"));
             if(section<0)section=0;
             for(var i=section+1;i<end;i++) {
                 var row=lines[i];var cash=Currency.Matches(row).Select(m=>m.Value).ToList();
