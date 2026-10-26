@@ -55,7 +55,7 @@ public class PayrollExcelExportTests {
         Assert.Equal("60",CellAt(rows[1],6).CellValue!.Text);
         Assert.Equal("15.50",CellAt(rows[1],7).CellValue!.Text);
         Assert.Equal(CellValues.Number,CellAt(rows[1],7).DataType!.Value);
-        Assert.Single(Rows(Sheet(doc,"تفاصيل البنود")).Skip(1));
+        Assert.Equal(2,Rows(Sheet(doc,"تفاصيل البنود")).Count-1);
         Assert.Equal("1",CellAt(Rows(Sheet(doc,"تفاصيل البنود"))[1],7).CellValue!.Text);
     }
 
