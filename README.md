@@ -41,6 +41,35 @@ Open http://localhost:4200 and import one, two or three files. Accepted report k
 
 The Angular UI supports search, page references, warnings, bank group totals, a locally saved import history, downloadable employee CSV, line-item CSV and original JSON review.
 
+## Selective Excel (.xlsx) payroll export
+
+After importing a payslip or payment sheet (or opening an existing saved import), use **تصدير Excel مخصص** in the Angular UI. Choose exactly one source report, then:
+
+- Employees: **all employees** or any manually selected one/many employees; name, national ID, institutional code and payment ID are searchable.
+- Financial columns: any combination of **total earnings (إجمالي الاستحقاقات)**, **total deductions (إجمالي الاستقطاعات)** and **net pay (الصافي)**.
+- Individual items: choose one or several distinct payroll lines by kind, account code **and full label**. This intentionally differentiates rows sharing the same account code (e.g., separate employer contributions).
+- Export produces a **native XLSX** with numeric amount cells and Arabic right-to-left worksheets: employee summary (one employee per row, selected columns and available-value totals), chosen item details with source page, and verification/notes. National IDs and payment identifiers remain **text**, preserving leading zeros.
+- Selected items absent for an employee are zero **only if both the whole source report is Verified and that employee has no warnings**; otherwise the cell is blank, not an invented zero. A reported numeric value can still be shown when review is required, with review status and warnings visible. Financial totals always sum *available numeric values*, not necessarily complete payroll.
+- The XLSX is created locally by the API from the **saved, immutable import report** using Open XML; the browser sends only report ID and selection criteria, never editable salary amounts. Files remain on the user's device; protect the XLSX because it includes sensitive personal/financial records.
+- The cover report has only bank-group summaries and does **not** support employee-level Excel export. Detailed item selection is available from employee payslips; payment-sheet-only reports support their available totals.
+- Re-import the original PDFs after parser fixes; opening an old saved import exports its original stored snapshot.
+
+API: `POST /api/exports/payroll` with a JSON payload, for example:
+
+```json
+{
+  "reportId": "00000000-0000-0000-0000-000000000001",
+  "allEmployees": false,
+  "employeeIndexes": [0, 2, 5],
+  "includeGross": true,
+  "includeDeductions": false,
+  "includeNet": true,
+  "itemKeys": []
+}
+```
+
+`employeeIndexes` refer to zero-based rows **within that specific stored report**; `itemKeys` are selected in the UI. The response is an XLSX download and must not be exposed to unauthenticated networks.
+
 ## Safety and correctness
 
 - Uses native PDFium through the `PDFiumCore` runtime; does not rely on X/Y locations.
