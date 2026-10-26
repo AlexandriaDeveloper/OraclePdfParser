@@ -1,1 +1,14 @@
-<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup><ItemGroup><ProjectReference Include="../../src/OraclePdfParser.Infrastructure/OraclePdfParser.Infrastructure.csproj"/></ItemGroup></Project>
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/OraclePdfParser.Domain/OraclePdfParser.Domain.csproj" />
+    <ProjectReference Include="../../src/OraclePdfParser.Application/OraclePdfParser.Application.csproj" />
+    <ProjectReference Include="../../src/OraclePdfParser.Infrastructure/OraclePdfParser.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>
