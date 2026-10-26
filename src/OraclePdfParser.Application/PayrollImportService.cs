@@ -14,6 +14,11 @@ public sealed class PayrollImportService : IPayrollImportService {
     private static readonly Regex Currency = new(@"(?<!\d)\d+(?:,\d{3})*\.\d{2}(?!\d)",RegexOptions.Compiled);
     private static readonly Regex ReversePay = new(@"(?<!\d)(\d{4,6})-(\d{5,6})(?!\d)",RegexOptions.Compiled);
     private static readonly Regex Pay = new(@"(?<!\d)\d{7,9}-\d{4,6}(?!\d)",RegexOptions.Compiled);
+    // A payslip's printed disbursement identifier embeds the institutional entity
+    // code before the hyphen. Read that prefix only from the labeled field.
+    private static readonly Regex LabeledInstitutionalCode = new(@"رقم\s+الصرف\s*:\s*(?<entity>\d{8})-\d{4,6}(?!\d)",RegexOptions.Compiled);
+    // Financial accounts cannot be inferred from a number in employee metadata.
+    private static readonly Regex PayslipMetadataHeading = new(@"^(?:اسم الموظف|رقم الصرف|الرقم القومي|نوع الصرف|البنك|الفرع|الرقم التاميني|الدرجه|الاداره)\s*:",RegexOptions.Compiled);
     private static readonly StringComparison Ignore=StringComparison.OrdinalIgnoreCase;
     private static string K(string? s)=>Arabic.Key(s);
     private static bool Has(string? t,string token)=>K(t).Contains(K(token),Ignore);
@@ -71,6 +76,8 @@ public sealed class PayrollImportService : IPayrollImportService {
             var all=string.Join("\n",r.Pages.Select(p=>p.Text));var header=r.Pages[0].Text;
             var id=NationalId.Match(header).Value;
             var pay=Pay.Match(header).Value;
+            var institutionalMatch=LabeledInstitutionalCode.Match(header);
+            var institutionalCode=institutionalMatch.Success?institutionalMatch.Groups["entity"].Value:null;
             var name=Labeled(header,"اسم الموظف","رقم الصرف") ?? Field(header,"اسم الموظف") ?? "";
             // PDF text streams can interleave digits and labels: isolate the name before payment marker.
             name=Regex.Replace(name,@"\s+"," ").Trim();
@@ -107,7 +114,9 @@ public sealed class PayrollImportService : IPayrollImportService {
             if(!entries.Any(x=>x.Kind==EntryKind.Earning)) warnings.Add("No detailed earnings could be safely linked");
             if(!entries.Any(x=>x.Kind==EntryKind.Deduction)) warnings.Add("No detailed deductions could be safely linked");
             foreach(var w in warnings)issues.Add(new("PAYSLIP_REVIEW",w,r.Start));
-            employees.Add(new(id.Length==14?id:null,pay.Length>0?pay:null,name,bank,gross,deduct,net,entries,warnings,r.Start,r.Pages[^1].Number));
+            employees.Add(new PayrollEmployee(id.Length==14?id:null,pay.Length>0?pay:null,name,bank,gross,deduct,net,entries,warnings,r.Start,r.Pages[^1].Number) {
+                InstitutionalEntityCode=institutionalCode
+            });
         }
         var dupe=employees.Where(e=>e.NationalId is not null).GroupBy(e=>e.NationalId).Where(g=>g.Count()>1);
         foreach(var g in dupe)issues.Add(new("DUPLICATE_EMPLOYEE",$"Duplicate national ID ({g.Count()} records)",null,"error"));
@@ -116,6 +125,10 @@ public sealed class PayrollImportService : IPayrollImportService {
     private static List<PayrollEntry> ExtractEntries(List<(int Number,string Text)> pages,List<string> warnings) {
         var entries=new List<PayrollEntry>();
         var state=EntryKind.Informational;string? code=null;var buf=new List<string>();int itemPage=pages[0].Number;
+        // Nothing in the employee header may become a payroll entry. A new
+        // page can continue a financial section, so this flag is semantic,
+        // not reset at each PDF page boundary.
+        bool financialSectionStarted=false;
         static bool IgnoreLine(string l)=>l.Length==0 || (Has(l,"الاسم") && Has(l,"القيمة")) ||
             Has(l,"نظام أوراكل") || Has(l,"المرتب عن شهر") || Has(l,"هذا البيان للمراجعة") || Has(l,"كشف رواتب") || l.Contains("BR_",StringComparison.OrdinalIgnoreCase);
         void Flush() {
@@ -134,6 +147,10 @@ public sealed class PayrollImportService : IPayrollImportService {
             var label=raw.Remove(amountToken.Index,amountToken.Length).Trim();
             if(label.Length<3)return;
             if(Has(label,"اجمالي") || Has(label,"الأجمالى") || Has(label,"الصافي"))return;
+            // Only genuine employer/government contributions may live between
+            // detail sections as informational entries. A header or unrelated
+            // eight-digit number must never masquerade as a financial item.
+            if(state==EntryKind.Informational && !Has(label,"حكومة"))return;
             if(code is null && !(state==EntryKind.Informational && Has(label,"حكومة"))) {
                 warnings.Add("Unanchored item: "+raw[..Math.Min(raw.Length,70)]);
                 return;
@@ -145,9 +162,13 @@ public sealed class PayrollImportService : IPayrollImportService {
                 var line=original.Trim();
                 if(GrossLine(line)) {Flush();state=EntryKind.Informational;code=null;continue;}
                 if(DeductionLine(line)) {Flush();state=EntryKind.Informational;code=null;continue;}
-                if(NetLine(line)) {Flush();state=EntryKind.Informational;code=null;continue;}
-                if(Has(line,"الاستحقاقات") && !Has(line,"اجمالى") && !Has(line,"اجمالي")){Flush();state=EntryKind.Earning;code=null;continue;}
-                if(Has(line,"الاستقطاعات") && !Has(line,"اجمالى") && !Has(line,"اجمالي")){Flush();state=EntryKind.Deduction;code=null;continue;}
+                if(NetLine(line)) {Flush();state=EntryKind.Informational;code=null;financialSectionStarted=false;continue;}
+                if(Has(line,"الاستحقاقات") && !Has(line,"اجمالى") && !Has(line,"اجمالي")){Flush();state=EntryKind.Earning;code=null;financialSectionStarted=true;continue;}
+                if(Has(line,"الاستقطاعات") && !Has(line,"اجمالى") && !Has(line,"اجمالي")){Flush();state=EntryKind.Deduction;code=null;financialSectionStarted=true;continue;}
+                if(!financialSectionStarted)continue;
+                // Metadata can recur on continuation pages and must not
+                // be joined to a preceding financial amount or account code.
+                if(PayslipMetadataHeading.IsMatch(K(line))){Flush();code=null;continue;}
                 if(IgnoreLine(line))continue;
                 if(line.TrimStart().StartsWith("x",Ignore)){Flush();code=null;continue;}
                 var match=Account.Match(line);
