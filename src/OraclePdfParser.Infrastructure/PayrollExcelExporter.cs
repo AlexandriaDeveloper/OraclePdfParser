@@ -116,19 +116,19 @@ public sealed class PayrollExcelExporter {
             var notes=AddSheet(wb,sheets,"معلومات ومراجعة",3,3);
             var noteRows=notes.Worksheet.GetFirstChild<SheetData>()!;
             var noteList=new List<object?[]>{
-                ["الحقل","القيمة","ملاحظة"],
-                ["ملف المصدر",report.FileName,null],
-                ["الشهر",report.Period,null],
-                ["نوع التقرير",report.Kind.ToString(),null],
-                ["حالة التحقق",report.Status.ToString(),"ReviewRequired تعني أن الأرقام تحتاج مراجعة"],
-                ["عدد الموظفين المختارين",employees.Length,null],
-                ["عدد البنود المختارة",itemKeys.Length,null],
-                ["تاريخ التصدير UTC",DateTimeOffset.UtcNow.ToString("O"),null],
-                ["معنى المعلوماتي","مساهمة جهة العمل/الحكومة","ليس استحقاقًا نقديًا إضافيًا للموظف"],
-                ["القيم الفارغة","غير متاحة أو غير مثبتة","لا تفسر القيم الفارغة على أنها صفر"],
-                ["الصفر في بند غير موجود","صفر في تقرير متحقق فقط","إذا لم يكن التقرير أو الموظف متحققًا تُترك الخانة فارغة"],
-                ["المجاميع","القيم الرقمية المتاحة فقط","لا تعتبر اعتمادًا للمبالغ عند وجود نقص أو تحذيرات"],
-                ["الخصوصية","يحتوي الملف بيانات مالية وشخصية","احفظه في مكان آمن ولا تشاركه دون تصريح"]
+                new object?[]{"الحقل","القيمة","ملاحظة"],
+                new object?[]{"ملف المصدر",report.FileName,null],
+                new object?[]{"الشهر",report.Period,null],
+                new object?[]{"نوع التقرير",report.Kind.ToString(),null],
+                new object?[]{"حالة التحقق",report.Status.ToString(),"ReviewRequired تعني أن الأرقام تحتاج مراجعة"],
+                new object?[]{"عدد الموظفين المختارين",employees.Length,null],
+                new object?[]{"عدد البنود المختارة",itemKeys.Length,null],
+                new object?[]{"تاريخ التصدير UTC",DateTimeOffset.UtcNow.ToString("O"),null],
+                new object?[]{"معنى المعلوماتي","مساهمة جهة العمل/الحكومة","ليس استحقاقًا نقديًا إضافيًا للموظف"],
+                new object?[]{"القيم الفارغة","غير متاحة أو غير مثبتة","لا تفسر القيم الفارغة على أنها صفر"],
+                new object?[]{"الصفر في بند غير موجود","صفر في تقرير متحقق فقط","إذا لم يكن التقرير أو الموظف متحققًا تُترك الخانة فارغة"],
+                new object?[]{"المجاميع","القيم الرقمية المتاحة فقط","لا تعتبر اعتمادًا للمبالغ عند وجود نقص أو تحذيرات"],
+                new object?[]{"الخصوصية","يحتوي الملف بيانات مالية وشخصية","احفظه في مكان آمن ولا تشاركه دون تصريح"]
             };
             foreach(var issue in report.Issues)noteList.Add(["تحذير من التقرير",issue.Code,issue.Message]);
             foreach(var emp in employees.Where(e=>e.Warnings.Count>0))
@@ -140,8 +140,6 @@ public sealed class PayrollExcelExporter {
         }
         return stream.ToArray();
     }
-
-    private static WorkbookStylesPart? Unused => null; // no state between exports
 
     private static Stylesheet MakeStyles(){
         var fonts=new Fonts(new Font(),new Font(new Bold(),new Color{Rgb="FFFFFFFF"})){Count=2};
