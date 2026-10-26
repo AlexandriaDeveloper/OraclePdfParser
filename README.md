@@ -46,6 +46,8 @@ The Angular UI supports search, page references, warnings, bank group totals, a 
 - Uses native PDFium through the `PDFiumCore` runtime; does not rely on X/Y locations.
 - Arabic presentation forms, Arabic/Indic digits, decimal separators, NFKC and variant spellings are normalized for matching.
 - Monetary amounts use .NET `decimal`; data structures preserve original item text and source page.
+- Payslip identity fields are parsed as metadata, not payroll line items. The institutional entity prefix (for example `30200105`) is exposed as `institutionalEntityCode` from the explicitly labeled disbursement identifier. Financial entries begin only after a recognized financial section heading, and only employer/government contributions can be `Informational` entries between sections.
+- `Informational` entries are employer/government contributions used in reconciliation; they are **not employee cash earnings**. Earlier saved SQLite report snapshots are intentionally immutable: re-import source PDFs to obtain corrected entries.
 - Payslip earnings / deductions and net including government contributions are checked.
 - Payment gross minus deduction must equal net for each accepted payment row.
 - Cover and payment groups are reconciled in order, with reported totals and number of employees.
