@@ -169,7 +169,7 @@ public sealed class PayrollExcelExporter {
         sheets.Append(new Sheet{Name=name,SheetId=sheetId,Id=workbook.GetIdOfPart(part)});
         return part;
     }
-    private static void AddRow(SheetData data,int rowNumber,IReadOnlyList<object?> values,IReadOnlySet<int> moneyColumns){
+    private static void AddRow(SheetData data,int rowNumber,IReadOnlyList<object?> values,HashSet<int> moneyColumns){
         var row=new Row{RowIndex=(uint)rowNumber};
         for(int i=0;i<values.Count;i++){
             var cell=new Cell{CellReference=ColumnName(i)+(uint)rowNumber,StyleIndex=rowNumber==1?1U:moneyColumns.Contains(i)?2U:0U};
