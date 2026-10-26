@@ -5,6 +5,7 @@ builder.Services.ConfigureHttpJsonOptions(options=>options.SerializerOptions.Con
 builder.Services.AddSingleton<IPayrollImportService,PayrollImportService>();
 builder.Services.AddSingleton<IPdfTextSource,PdfiumTextSource>();
 builder.Services.AddSingleton<PayrollBatchReconciler>();
+builder.Services.AddSingleton<PayrollExcelExporter>();
 var path=builder.Configuration["ImportArchive:Path"]??Path.Combine(builder.Environment.ContentRootPath,"App_Data","oracle-imports.db");
 builder.Services.AddSingleton<IImportArchive>(_=>new SqliteImportArchive(path));
 builder.Services.AddCors(o=>o.AddPolicy("LocalAngular",p=>p.WithOrigins("http://localhost:4200").AllowAnyHeader().AllowAnyMethod()));
@@ -14,6 +15,20 @@ app.UseCors("LocalAngular");
 app.MapGet("/api/health",()=>Results.Ok(new{status="ok"}));
 app.MapGet("/api/imports",async(IImportArchive archive,int? skip,int? take,CancellationToken ct)=>Results.Ok(await archive.ListAsync(skip??0,take??20,ct)));
 app.MapGet("/api/imports/{id:guid}",async(Guid id,IImportArchive archive,CancellationToken ct)=>{var report=await archive.GetAsync(id,ct);return report is null?Results.NotFound():Results.Ok(report);});
+app.MapPost("/api/exports/payroll",async(PayrollExcelRequest request, IImportArchive archive,PayrollExcelExporter exporter,HttpContext context,CancellationToken ct)=>{
+    if(request.ReportId==Guid.Empty)return Results.BadRequest(new{error="Select a saved payroll report"});
+    var report=await archive.GetAsync(request.ReportId,ct);
+    if(report is null)return Results.NotFound(new{error="Payroll report not found"});
+    try {
+        var bytes=exporter.Create(report,request);
+        context.Response.Headers.CacheControl="no-store";
+        return Results.File(bytes,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "oracle-payroll-"+DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss")+".xlsx");
+    } catch(ArgumentException error){
+        return Results.BadRequest(new{error=error.Message});
+    }
+});
 app.MapPost("/api/import",async(HttpRequest request,IPdfTextSource pdf,IPayrollImportService importer,PayrollBatchReconciler reconcile,IImportArchive archive,CancellationToken ct)=>{
     if(!request.HasFormContentType)return Results.BadRequest(new{error="Multipart form-data required"});
     var form=await request.ReadFormAsync(ct);
